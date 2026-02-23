@@ -1,0 +1,2 @@
+Para la pantalla de login: coloque aquí el archivo "logo_portada.png" (el emblema circular de Iglesia Pentecostal de Welland).
+Si no hay logo, se mostrará un ícono de iglesia como placeholder.

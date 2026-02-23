@@ -1,0 +1,23 @@
+{
+  "usuarios": {
+    "admin": {
+      "nombre": "Administrador",
+      "permisos": [
+        "*"
+      ]
+    },
+    "tesorero": {
+      "nombre": "Tesorero",
+      "permisos": [
+        "ver_registrar_gasto",
+        "ver_hoja_contable",
+        "ver_informe_pdf",
+        "ver_exportar_hoja_pdf",
+        "ver_inicio",
+        "ver_ministerio_finanzas",
+        "ver_ingresar_bendicion",
+        "ver_eliminar_registros"
+      ]
+    }
+  }
+}
