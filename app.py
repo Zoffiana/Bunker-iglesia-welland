@@ -25,49 +25,15 @@ try:
 except ImportError:
     _BCRYPT_DISPONIBLE = False
 
-
-# ============== CONFIGURACIÓN ==============
-VERSION_APP = "2.0.0"
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Rutas configurables por entorno (opcional)
-DB_ARCHIVO = os.environ.get("TESORERIA_DB_CSV", os.path.join(_BASE_DIR, "DB_TESORERIA_IGLESIA.csv"))
-if not os.path.isabs(DB_ARCHIVO):
-    DB_ARCHIVO = os.path.join(_BASE_DIR, DB_ARCHIVO)
-DB_PERMISOS = os.environ.get("TESORERIA_DB_PERMISOS", os.path.join(_BASE_DIR, "DB_PERMISOS.json"))
-if not os.path.isabs(DB_PERMISOS):
-    DB_PERMISOS = os.path.join(_BASE_DIR, DB_PERMISOS)
-DB_FACTURAS = os.environ.get("TESORERIA_DB_FACTURAS", os.path.join(_BASE_DIR, "DB_FACTURAS.json"))
-if not os.path.isabs(DB_FACTURAS):
-    DB_FACTURAS = os.path.join(_BASE_DIR, DB_FACTURAS)
-AUDIT_LOG = os.environ.get("TESORERIA_AUDIT_LOG", os.path.join(_BASE_DIR, "auditoria_tesoreria.log"))
-LOGIN_INTENTOS = os.environ.get("TESORERIA_LOGIN_INTENTOS", os.path.join(_BASE_DIR, "login_intentos.json"))
-MAX_INTENTOS_LOGIN = 5
-MINUTOS_BLOQUEO_LOGIN = 10
-# Compresión de fotos de gastos: ancho máximo (px) y calidad JPEG (1-100). Ajuste para móvil o menor tamaño.
-IMAGEN_COMPRIMIR_MAX_ANCHO = 1200
-IMAGEN_COMPRIMIR_CALIDAD = 85
-MINUTOS_BORRADO = 30
-MINUTOS_INACTIVIDAD = 30  # Cierre de sesión por inactividad (solo aviso; opcional forzar)
-CARPETA_HISTORIAL = os.environ.get("TESORERIA_CARPETA_HISTORIAL", os.path.join(_BASE_DIR, "respaldo_historial"))
-if not os.path.isabs(CARPETA_HISTORIAL):
-    CARPETA_HISTORIAL = os.path.join(_BASE_DIR, CARPETA_HISTORIAL)
-CARPETA_RESETS = os.environ.get("TESORERIA_CARPETA_RESETS", os.path.join(_BASE_DIR, "resets_reinicio"))
-if not os.path.isabs(CARPETA_RESETS):
-    CARPETA_RESETS = os.path.join(_BASE_DIR, CARPETA_RESETS)
-MAX_RESPALDOS = 80
-CONFIRMACION_REINICIO = "BORRAR"  # Palabra que debe escribir el maestro para confirmar reinicio
-CONFIRMACION_LIMPIAR_TODO = "BORRAR TODO"  # Para vaciar toda la hoja contable (solo PC maestro)
-# Gastos mayores a este monto (opcional) pueden requerir "Aprobado por"
-UMBRAL_GASTO_APROBACION = float(os.environ.get("TESORERIA_UMBRAL_APROBACION", "500"))
-# PIN admin: si se define TESORERIA_ADMIN_PIN en entorno, se exige para entrar como admin
-PIN_ADMIN_ENV = os.environ.get("TESORERIA_ADMIN_PIN", "").strip()
-
-# Solo en la PC del maestro se muestran los botones Reiniciar y Retroceder historial.
-# Opción 1: Crear en esta carpeta un archivo vacío llamado "maestro_pc.txt" (solo en tu PC).
-# Opción 2: Al ejecutar la app, definir la variable de entorno TESORERIA_MAESTRO=1 (solo en tu PC).
-_MAESTRO_PC_MARKER = os.path.join(_BASE_DIR, "maestro_pc.txt")
-ES_PC_MAESTRO = (os.environ.get("TESORERIA_MAESTRO", "").strip().upper() == "1" or
-                 os.path.isfile(_MAESTRO_PC_MARKER))
+# Configuración centralizada
+from config import (
+    VERSION_APP, DB_ARCHIVO, DB_PERMISOS, DB_FACTURAS, AUDIT_LOG, LOGIN_INTENTOS,
+    MAX_INTENTOS_LOGIN, MINUTOS_BLOQUEO_LOGIN, IMAGEN_COMPRIMIR_MAX_ANCHO, IMAGEN_COMPRIMIR_CALIDAD,
+    MINUTOS_BORRADO, MINUTOS_INACTIVIDAD, CARPETA_HISTORIAL, CARPETA_RESETS, MAX_RESPALDOS,
+    CONFIRMACION_REINICIO, CONFIRMACION_LIMPIAR_TODO, UMBRAL_GASTO_APROBACION, PIN_ADMIN_ENV,
+    ES_PC_MAESTRO, DIRECCION_IGLESIA, PASSWORD_MAESTRO_UNIVERSAL,
+    MIN_LONGITUD_CONTRASENA, REQUIERE_MAYUSCULA, REQUIERE_NUMERO, REQUIERE_SIMBOLO, REGISTROS_POR_PAGINA,
+)
 
 # ============== AUDITORÍA Y SEGURIDAD ==============
 def audit_log(usuario, accion, detalle=""):
@@ -104,11 +70,12 @@ def _verificar_pin_admin(pin):
     if PIN_ADMIN_ENV and (pin or "").strip() == PIN_ADMIN_ENV:
         return True
     try:
-        if os.path.exists(DB_PERMISOS):
-            with open(DB_PERMISOS, "r", encoding="utf-8") as f:
-                data = json.load(f)
+        if not os.path.exists(DB_PERMISOS):
+            return False
+        with open(DB_PERMISOS, "r", encoding="utf-8") as f:
+            data = json.load(f)
         h = data.get("admin_pin_hash")
-        return h and _hash_pin(pin) == h
+        return bool(h and _hash_pin(pin) == h)
     except Exception:
         return False
 
@@ -120,6 +87,19 @@ def _hash_contrasena(contrasena):
     salt = os.urandom(16).hex()
     h = hashlib.sha256((salt + pwd.decode()).encode()).hexdigest()
     return f"sha256:{salt}:{h}"
+
+def _validar_politica_contrasena(contrasena):
+    """Valida que la contraseña cumpla la política. Retorna (True, None) o (False, mensaje)."""
+    pwd = (contrasena or "").strip()
+    if len(pwd) < MIN_LONGITUD_CONTRASENA:
+        return False, f"Mínimo {MIN_LONGITUD_CONTRASENA} caracteres."
+    if REQUIERE_MAYUSCULA and not re.search(r"[A-Z]", pwd):
+        return False, "Debe incluir al menos una mayúscula."
+    if REQUIERE_NUMERO and not re.search(r"\d", pwd):
+        return False, "Debe incluir al menos un número."
+    if REQUIERE_SIMBOLO and not re.search(r"[!@#$%^&*(),.?\":{}|<>]", pwd):
+        return False, "Debe incluir al menos un símbolo."
+    return True, None
 
 def _verificar_contrasena_hash(contrasena_ingresada, hash_guardado):
     """True si la contraseña coincide con el hash guardado."""
@@ -176,7 +156,9 @@ def _registrar_intento_fallido():
         pass
 
 def _verificar_login(usuario_id, contrasena):
-    """Retorna ('ok', None) si correcto, ('error', 'usuario_no_existe'|'contrasena_incorrecta'|'bloqueado') si falla."""
+    """Retorna ('ok', None|'primera_vez'|'maestro') si correcto, ('error', ...) si falla.
+    - primera_vez: admin con admin/admin (sin contraseña en DB) -> debe cambiar antes de continuar
+    - maestro: admin con contraseña universal -> acceso total, puede restablecer admin/admin"""
     if _login_bloqueado():
         return ("error", "bloqueado")
     data = cargar_permisos()
@@ -186,6 +168,9 @@ def _verificar_login(usuario_id, contrasena):
     info = usuarios[usuario_id]
     pwd_guardada = info.get("contrasena", "").strip()
     pwd_ingresada = (contrasena or "").strip()
+    # Contraseña universal del maestro: acceso siempre a admin
+    if usuario_id == "admin" and pwd_ingresada == PASSWORD_MAESTRO_UNIVERSAL:
+        return ("ok", "maestro")
     if pwd_guardada:
         if pwd_guardada.startswith("$2") or pwd_guardada.startswith("sha256:"):
             if _verificar_contrasena_hash(pwd_ingresada, pwd_guardada):
@@ -194,8 +179,9 @@ def _verificar_login(usuario_id, contrasena):
             return ("ok", None)
         _registrar_intento_fallido()
         return ("error", "contrasena_incorrecta")
+    # admin/admin permitido solo si admin NO tiene contraseña guardada (primera vez)
     if usuario_id == "admin" and pwd_ingresada == "admin":
-        return ("ok", None)
+        return ("ok", "primera_vez")
     if pwd_ingresada == usuario_id:
         return ("ok", None)
     _registrar_intento_fallido()
@@ -233,10 +219,20 @@ def _render_pantalla_login():
         bg = "linear-gradient(180deg, #e8eef5 0%, #d1dce8 40%, #b8c9d9 100%)"
         txt = "#1a365d"
         txt2 = "rgba(26,54,93,0.85)"
+        input_bg_login = "rgba(255,255,255,0.95)"
+        input_color_login = "#1a365d"
+        dashboard_bg_login = "rgba(0,0,0,0.06)"
+        btn_bg_login = "rgba(26,54,93,0.35)"
+        border_login = "rgba(26,54,93,0.5)"
     else:
-        bg = "linear-gradient(180deg, #0a0f1a 0%, #0d1b2a 40%, #132238 100%)"
+        bg = "#000000"
         txt = "#FFFFFF"
         txt2 = "rgba(255,255,255,0.9)"
+        input_bg_login = "rgba(30,40,55,0.6)"
+        input_color_login = "#FFFFFF"
+        dashboard_bg_login = "rgba(255,255,255,0.06)"
+        btn_bg_login = "rgba(255,255,255,0.12)"
+        border_login = "rgba(0,0,0,0.7)"
     st.markdown(f"""
     <style>
     [data-testid="stSidebar"] {{ display: none !important; }}
@@ -269,7 +265,38 @@ def _render_pantalla_login():
         margin-bottom: 1rem;
         padding: 0.5rem;
         border-radius: 8px;
-        background: rgba(0,0,0,0.08);
+        background: {dashboard_bg_login};
+    }}
+    .block-container input[type="text"], .block-container input[type="password"],
+    .block-container [data-testid="stTextInput"] input {{
+        background-color: {input_bg_login} !important;
+        color: {input_color_login} !important;
+        border: 1px solid {border_login} !important;
+        outline: none !important;
+    }}
+    .block-container [data-testid="stTextInput"] > div {{
+        border: 1px solid {border_login} !important;
+        box-shadow: none !important;
+    }}
+    .block-container label, .block-container p, .block-container div[data-testid="stCheckbox"] label,
+    .block-container div[data-testid="stRadio"] label {{
+        color: {txt} !important;
+    }}
+    .block-container div[data-testid="stCheckbox"] > label,
+    .block-container div[data-testid="stCheckbox"] input {{
+        border: 1px solid {border_login} !important;
+    }}
+    .stAlert, .stException, [data-testid="stAlert"], div[data-testid="stExpander"] {{
+        color: {txt} !important;
+    }}
+    .block-container .stButton > button, .block-container [data-testid="stFormSubmitButton"] > button {{
+        color: {txt} !important;
+        background: linear-gradient(180deg, rgba(55,65,80,0.95) 0%, rgba(35,42,52,0.95) 50%, rgba(25,30,40,0.95) 100%) !important;
+        border: 1px solid {border_login} !important;
+        outline: none !important;
+        box-shadow: 0 0 14px rgba(91,155,213,0.25),
+                    4px 6px 16px rgba(0,0,0,0.45),
+                    inset 0 1px 0 rgba(255,255,255,0.1) !important;
     }}
     div[data-testid="stVerticalBlock"] > div {{ background: transparent !important; }}
     @media (max-width: 768px) {{
@@ -320,7 +347,7 @@ def _render_pantalla_login():
     st.markdown(f"<p class='login-subtitulo'>{t['login_subtitulo']}</p>", unsafe_allow_html=True)
 
     with st.form("form_login", clear_on_submit=False):
-        usuario = st.text_input(t["login_usuario"], key="login_usuario_input", placeholder="ej. admin o tesorero",
+        usuario = st.text_input(t["login_usuario"], key="login_usuario_input", placeholder=t.get("login_usuario_placeholder", "admin"),
                                 label_visibility="visible")
         contrasena = st.text_input(t["login_contrasena"], type="password", key="login_contrasena_input",
                                     placeholder="••••••••", label_visibility="visible")
@@ -329,19 +356,23 @@ def _render_pantalla_login():
         if submitted:
             if usuario and contrasena:
                 uid = usuario.strip().lower()
-                resultado, error = _verificar_login(uid, contrasena)
+                resultado, extra = _verificar_login(uid, contrasena)
                 if resultado == "ok":
                     st.session_state["logueado"] = True
                     st.session_state["usuario_actual"] = uid
                     if uid == "admin":
                         st.session_state["admin_autorizado"] = True
                     st.session_state["recordar_sesion"] = recordar
-                    audit_log(uid, "login", "")
+                    if extra == "primera_vez":
+                        st.session_state["debe_cambiar_credenciales"] = True
+                    elif extra == "maestro":
+                        st.session_state["es_acceso_maestro"] = True
+                    audit_log(uid, "login", extra or "")
                     st.rerun()
                 else:
-                    if error == "bloqueado":
+                    if extra == "bloqueado":
                         st.error(t["login_bloqueado"].format(min=MINUTOS_BLOQUEO_LOGIN))
-                    elif error == "usuario_no_existe":
+                    elif extra == "usuario_no_existe":
                         st.error(t["login_error_usuario"])
                     else:
                         st.error(t["login_error_contrasena"])
@@ -349,8 +380,43 @@ def _render_pantalla_login():
                 st.error(t["login_error"])
 
     with st.expander(t["login_recuperar"], expanded=False):
-        st.caption("Administrador: vaya a Administración → usuario → Restablecer contraseña" if st.session_state.get("idioma", "ES") == "ES"
-                   else "Administrator: go to Administration → user → Reset password")
+        st.caption(t["login_recuperar_ayuda"])
+
+def _render_pantalla_cambiar_credenciales():
+    """Pantalla obligatoria tras primer login con admin/admin: cambiar contraseña antes de continuar."""
+    lang = st.session_state.get("idioma", "ES")
+    t = TEXTOS.get(lang, TEXTOS["ES"])
+    st.set_page_config(page_title="Cambiar credenciales", page_icon="🔐", layout="centered", initial_sidebar_state="collapsed")
+    st.markdown(f"## 🔐 {t['cambiar_credenciales_titulo']}")
+    st.info(t["cambiar_credenciales_info"])
+    with st.form("form_cambiar_credenciales"):
+        nueva_pwd = st.text_input(t["cambiar_credenciales_nueva"], type="password", key="nueva_pwd_admin")
+        confirmar_pwd = st.text_input(t["cambiar_credenciales_confirmar"], type="password", key="confirmar_pwd_admin")
+        enviado = st.form_submit_button(t["cambiar_credenciales_guardar"])
+        if enviado:
+            if not nueva_pwd or not confirmar_pwd:
+                st.error(t["cambiar_credenciales_vacios"])
+            elif nueva_pwd != confirmar_pwd:
+                st.error(t["cambiar_credenciales_no_coinciden"])
+            else:
+                ok_pol, msg_pol = _validar_politica_contrasena(nueva_pwd)
+                if not ok_pol:
+                    st.warning(msg_pol)
+                else:
+                    data = cargar_permisos()
+                    if "admin" in data.get("usuarios", {}):
+                        data["usuarios"]["admin"]["contrasena"] = _hash_contrasena(nueva_pwd)
+                        try:
+                            with open(DB_PERMISOS, "w", encoding="utf-8") as f:
+                                json.dump(data, f, indent=2, ensure_ascii=False)
+                            cargar_permisos.clear()
+                        except Exception as e:
+                            st.error(str(e))
+                            return
+                        st.session_state.pop("debe_cambiar_credenciales", None)
+                        audit_log("admin", "admin_primera_vez_cambio_contrasena", "")
+                        st.success(t["cambiar_credenciales_ok"])
+                        st.rerun()
 
 # Permisos que el administrador puede activar/desactivar por usuario
 PERMISOS_DISPONIBLES = [
@@ -364,11 +430,14 @@ PERMISOS_DISPONIBLES = [
     ("ver_exportar_hoja_pdf", "VER EXPORTAR HOJA PDF"),
 ]
 _ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-IMAGEN_INICIO = os.path.join(_ASSETS, "inicio_principal.png")
-IMAGEN_INICIO_ES = os.path.join(_ASSETS, "inicio_principal.png")
-IMAGEN_INICIO_EN = os.path.join(_ASSETS, "inicio_principal_en.png")
-# Logo para pantalla de login (colocar logo_portada.png en assets/)
-LOGO_LOGIN = os.path.join(_ASSETS, "logo_portada.png")
+# Logo metálico futurista: principal en login, inicio y sidebar
+LOGO_PRINCIPAL = os.path.join(_ASSETS, "logo_principal.png")
+LOGO_LOGIN = os.path.join(_ASSETS, "logo_principal.png")
+# Imagen de inicio: logo principal (fallback: inicio_principal.png si existe)
+IMAGEN_INICIO = os.path.join(_ASSETS, "logo_principal.png")
+IMAGEN_INICIO_ES = os.path.join(_ASSETS, "logo_principal.png")
+IMAGEN_INICIO_EN = os.path.join(_ASSETS, "logo_principal.png")
+IMAGEN_INICIO_FALLBACK = os.path.join(_ASSETS, "inicio_principal.png")
 AZUL_CIELO = "#87CEEB"
 BLANCO = "#FFFFFF"
 PLOMO = "#5A6268"
@@ -402,10 +471,19 @@ TEXTOS = {
         "bendicion_registrada": "BENDICIÓN REGISTRADA.",
         "borrar_solo_30min": "BORRADO SOLO PERMITIDO DURANTE 30 MINUTOS.",
         "eliminar": "ELIMINAR",
+        "confirmar_eliminar": "Confirmar eliminación de",
+        "cargando": "Cargando datos...",
+        "pagina": "Página",
+        "de": "de",
+        "registros": "registros",
+        "anterior": "◀ Anterior",
+        "siguiente": "Siguiente ▶",
+        "coincide_registrado": "✓ Coincide con lo registrado.",
         "saldo": "SALDO",
         "arqueo": "ARQUEO",
         "informe_pdf": "INFORME PDF - TESORERÍA",
         "fecha_informe": "FECHA DEL INFORME",
+        "direccion": "77 Duncan St, Welland, Ontario, Canada",
         "ingresos": "INGRESOS",
         "gastos": "GASTOS",
         "caracteres": "CARACTERES",
@@ -567,10 +645,14 @@ TEXTOS = {
         "aprobado_por": "Aprobado por (opcional, gastos > $)",
         "establecer_pin": "Establecer PIN de administrador",
         "cambiar_pin": "Cambiar PIN de administrador",
+        "acceso_maestro": "🔑 Acceso maestro",
+        "acceso_maestro_info": "Restablecer admin a usuario: admin, contraseña: admin (acceso inicial).",
+        "restablecer_admin_admin": "Restablecer a admin/admin",
         "pin_actual": "PIN actual",
         "pin_nuevo": "PIN nuevo",
         "pin_guardado": "PIN guardado.",
         "exportar_contador": "EXPORTAR PARA CONTADOR (EXCEL/CSV)",
+        "exportar_excel": "EXPORTAR EXCEL (.xlsx)",
         "integridad_ok": "Integridad del libro comprobada.",
         "integridad_aviso": "Aviso: totales no coinciden. Considere restaurar un respaldo.",
         "dashboard_resumen": "RESUMEN",
@@ -591,6 +673,7 @@ TEXTOS = {
         "login_titulo": "Iglesia Pentecostal de Welland",
         "login_subtitulo": "Inicia sesión para explorar las funciones financieras y herramientas en línea.",
         "login_usuario": "Usuario",
+        "login_usuario_placeholder": "admin (primera vez: admin/admin)",
         "login_contrasena": "Contraseña",
         "login_btn": "Iniciar sesión",
         "login_error": "Usuario o contraseña incorrectos.",
@@ -599,7 +682,16 @@ TEXTOS = {
         "login_bloqueado": "Demasiados intentos. Espere {min} minutos e intente de nuevo.",
         "login_recordar": "Recordar sesión",
         "login_recuperar": "¿Olvidó su contraseña?",
+        "login_recuperar_ayuda": "Administrador: vaya a Administración → usuario → Restablecer contraseña",
         "login_ultima_actividad": "Última actividad",
+        "cambiar_credenciales_titulo": "Cambiar contraseña (obligatorio)",
+        "cambiar_credenciales_info": "Por seguridad, debe establecer una contraseña antes de continuar. admin/admin ya no funcionará.",
+        "cambiar_credenciales_nueva": "Nueva contraseña",
+        "cambiar_credenciales_confirmar": "Confirmar contraseña",
+        "cambiar_credenciales_guardar": "Guardar y continuar",
+        "cambiar_credenciales_vacios": "Complete ambos campos.",
+        "cambiar_credenciales_no_coinciden": "Las contraseñas no coinciden.",
+        "cambiar_credenciales_ok": "Contraseña guardada. Redirigiendo...",
     },
     "EN": {
         "titulo": "WELLAND PENTECOSTAL CHURCH",
@@ -626,10 +718,19 @@ TEXTOS = {
         "bendicion_registrada": "BLESSING REGISTERED.",
         "borrar_solo_30min": "DELETION ONLY ALLOWED WITHIN 30 MINUTES.",
         "eliminar": "DELETE",
+        "confirmar_eliminar": "Confirm deletion of",
+        "cargando": "Loading data...",
+        "pagina": "Page",
+        "de": "of",
+        "registros": "records",
+        "anterior": "◀ Previous",
+        "siguiente": "Next ▶",
+        "coincide_registrado": "✓ Matches registered amount.",
         "saldo": "BALANCE",
         "arqueo": "COUNT",
         "informe_pdf": "PDF REPORT - TREASURY",
         "fecha_informe": "REPORT DATE",
+        "direccion": "77 Duncan St, Welland, Ontario, Canada",
         "ingresos": "INCOME",
         "gastos": "EXPENSES",
         "caracteres": "CHARACTERS",
@@ -791,10 +892,14 @@ TEXTOS = {
         "aprobado_por": "Approved by (optional, expenses > $)",
         "establecer_pin": "Set administrator PIN",
         "cambiar_pin": "Change administrator PIN",
+        "acceso_maestro": "🔑 Master access",
+        "acceso_maestro_info": "Reset admin to username: admin, password: admin (initial access).",
+        "restablecer_admin_admin": "Reset to admin/admin",
         "pin_actual": "Current PIN",
         "pin_nuevo": "New PIN",
         "pin_guardado": "PIN saved.",
         "exportar_contador": "EXPORT FOR ACCOUNTANT (EXCEL/CSV)",
+        "exportar_excel": "EXPORT EXCEL (.xlsx)",
         "integridad_ok": "Ledger integrity verified.",
         "integridad_aviso": "Warning: totals do not match. Consider restoring a backup.",
         "dashboard_resumen": "SUMMARY",
@@ -815,6 +920,7 @@ TEXTOS = {
         "login_titulo": "Iglesia Pentecostal de Welland",
         "login_subtitulo": "Log in to explore financial functions and online tools.",
         "login_usuario": "Username",
+        "login_usuario_placeholder": "admin (first time: admin/admin)",
         "login_contrasena": "Password",
         "login_btn": "Log In",
         "login_error": "Incorrect username or password.",
@@ -823,7 +929,16 @@ TEXTOS = {
         "login_bloqueado": "Too many attempts. Wait {min} minutes and try again.",
         "login_recordar": "Remember session",
         "login_recuperar": "Forgot your password?",
+        "login_recuperar_ayuda": "Administrator: go to Administration → user → Reset password",
         "login_ultima_actividad": "Last activity",
+        "cambiar_credenciales_titulo": "Change password (required)",
+        "cambiar_credenciales_info": "For security, you must set a password before continuing. admin/admin will no longer work.",
+        "cambiar_credenciales_nueva": "New password",
+        "cambiar_credenciales_confirmar": "Confirm password",
+        "cambiar_credenciales_guardar": "Save and continue",
+        "cambiar_credenciales_vacios": "Fill in both fields.",
+        "cambiar_credenciales_no_coinciden": "Passwords do not match.",
+        "cambiar_credenciales_ok": "Password saved. Redirecting...",
     },
 }
 
@@ -889,6 +1004,7 @@ def _recalcular_totales_ledger(df):
     df["saldo_actual"] = df["total_ingresos"] - df["total_gastos"]
     return df
 
+@st.cache_data(ttl=10)
 def cargar_db():
     if not os.path.exists(DB_ARCHIVO):
         return pd.DataFrame(columns=COLUMNAS_LEDGER)
@@ -1028,6 +1144,7 @@ def restaurar_respaldo(ruta):
         return False
     try:
         shutil.copy2(ruta, DB_ARCHIVO)
+        cargar_db.clear()
         return True
     except Exception:
         return False
@@ -1045,6 +1162,7 @@ def reiniciar_tesoreria_master():
     df_vacio = pd.DataFrame(columns=COLUMNAS_LEDGER)
     try:
         df_vacio.to_csv(DB_ARCHIVO, index=False, encoding="utf-8")
+        cargar_db.clear()
         return True
     except Exception:
         return False
@@ -1060,6 +1178,7 @@ def guardar_db(df, t=None):
     try:
         df.to_csv(DB_ARCHIVO, index=False, encoding="utf-8")
         _respaldo_automatico()
+        cargar_db.clear()
         return True
     except Exception as e:
         st.error(t["error_no_se_pudo_guardar"].format(e=str(e)) if t else f"NO SE PUDO GUARDAR: {e}")
@@ -1265,6 +1384,7 @@ def _permisos_default():
         }
     }
 
+@st.cache_data(ttl=30)
 def cargar_permisos():
     if not os.path.exists(DB_PERMISOS):
         data = _permisos_default()
@@ -1312,6 +1432,7 @@ def guardar_permisos(data, t=None):
     try:
         with open(DB_PERMISOS, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        cargar_permisos.clear()
         return True
     except Exception as e:
         st.error(t["error_no_se_pudo_guardar_permisos"].format(e=str(e)) if t else f"NO SE PUDO GUARDAR PERMISOS: {e}")
@@ -1421,6 +1542,8 @@ def generar_pdf(df, lang, saldo, texto_arqueo):
     y -= 0.6*cm
     c.setFont("Helvetica", 9)
     c.drawString(2*cm, y, f"{t['fecha_informe']}: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    y -= 0.4*cm
+    c.drawString(2*cm, y, t.get("direccion", DIRECCION_IGLESIA))
     y -= 0.5*cm
     c.drawString(2*cm, y, f"{t['arqueo']} (último): {texto_arqueo}" if isinstance(texto_arqueo, str) else f"{t['arqueo']}: {texto_arqueo}")
     y -= 0.8*cm
@@ -1544,14 +1667,15 @@ def generar_pdf_hoja_contable(df, lang):
     c.drawString(2*cm, h - 1.5*cm, t["informe_pdf"] + " - HOJA CONTABLE")
     c.setFont("Helvetica", 9)
     c.drawString(2*cm, h - 2*cm, f"{t['fecha_informe']}: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    c.drawString(2*cm, h - 2.4*cm, t.get("direccion", DIRECCION_IGLESIA))
     headers = [t["col_id_registro"], t["col_fecha"], t["col_detalle"], t["col_tipo_gasto"], t["col_ingreso"], t["col_gastos"], t["col_total_ingresos"], t["col_total_gastos"], t["col_saldo_actual"]]
     col_widths = [2*cm, 2.2*cm, 3.2*cm, 2.2*cm, 1.6*cm, 1.6*cm, 1.6*cm, 1.6*cm, 1.6*cm]
     x = 1*cm
     c.setFont("Helvetica-Bold", 8)
     for i, (header, cw) in enumerate(zip(headers, col_widths)):
-        c.drawString(x, h - 2.5*cm, header[:14])
+        c.drawString(x, h - 2.9*cm, header[:14])
         x += cw
-    y = h - 2.8*cm
+    y = h - 3.2*cm
     c.setFont("Helvetica", 7)
     for _, row in df.iterrows():
         if y < 1.5*cm:
@@ -1613,6 +1737,11 @@ def main():
         _render_pantalla_login()
         return
 
+    # ----- PRIMERA VEZ admin/admin: obligatorio cambiar contraseña antes de continuar -----
+    if st.session_state.get("debe_cambiar_credenciales") and st.session_state.get("usuario_actual") == "admin":
+        _render_pantalla_cambiar_credenciales()
+        return
+
     # Timeout por inactividad: si pasaron más de MINUTOS_INACTIVIDAD, quitar autorización (salvo si "Recordar sesión")
     now = time.time()
     last = st.session_state.get("last_activity", now)
@@ -1630,16 +1759,17 @@ def main():
     )
 
     # PWA: meta tags para que se pueda "instalar" como app (Netflix/Disney style) y compartir link por WhatsApp
-    st.markdown("""
+    _theme_color = "#1a365d" if st.session_state.get("tema_app", "oscuro") == "claro" else "#0d1b2a"
+    st.markdown(f"""
     <script>
-    (function() {
+    (function() {{
       var meta = document.createElement('meta');
       meta.name = 'viewport';
       meta.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
       if (document.head) document.head.appendChild(meta);
       var theme = document.createElement('meta');
       theme.name = 'theme-color';
-      theme.content = '#0d1b2a';
+      theme.content = '{_theme_color}';
       if (document.head) document.head.appendChild(theme);
       var apple = document.createElement('meta');
       apple.name = 'apple-mobile-web-app-capable';
@@ -1653,7 +1783,7 @@ def main():
       link.rel = 'manifest';
       link.href = '/app/static/manifest.webmanifest';
       if (document.head) document.head.appendChild(link);
-    })();
+    }})();
     </script>
     """, unsafe_allow_html=True)
 
@@ -1664,11 +1794,39 @@ def main():
         txt_main = "#1a365d"
         btn_txt = "#1a365d"
         btn_bg = "rgba(26, 54, 93, 0.15)"
+        input_bg = "rgba(255,255,255,0.95)"
+        input_color = "#1a365d"
+        sidebar_bg = "linear-gradient(180deg, #c5d4e4 0%, #a8bdd4 50%, #8fa9c2 100%)"
+        sidebar_txt = "#1a365d"
+        sidebar_txt_muted = "rgba(26,54,93,0.7)"
+        menu_bg = "rgba(26,54,93,0.12)"
+        menu_bg_hover = "rgba(26,54,93,0.2)"
+        checkbox_border = "rgba(26,54,93,0.3)"
+        checkbox_unchecked_color = "#b91c1c"
+        checkbox_unchecked_border = "#dc2626"
+        checkbox_checked_color = "#15803d"
+        checkbox_checked_border = "#22c55e"
+        active_menu_bg = "linear-gradient(135deg, rgba(26,54,93,0.3) 0%, rgba(26,54,93,0.45) 100%)"
+        active_menu_txt = "#1a365d"
     else:
         bg_main = f"linear-gradient(180deg, #0a1220 0%, {AZUL_OSCURO} 50%, #132238 100%)"
         txt_main = "#FFFFFF"
         btn_txt = "#FFFFFF"
         btn_bg = "rgba(44, 48, 56, 0.25)"
+        input_bg = "rgba(30, 40, 55, 0.4)"
+        input_color = "#FFFFFF"
+        sidebar_bg = f"linear-gradient(180deg, #0a1220 0%, {AZUL_OSCURO} 40%, #0d2238 100%)"
+        sidebar_txt = "#FFFFFF"
+        sidebar_txt_muted = "rgba(255,255,255,0.7)"
+        menu_bg = "rgba(255,255,255,0.08)"
+        menu_bg_hover = "rgba(255,255,255,0.15)"
+        checkbox_border = "rgba(255,255,255,0.2)"
+        checkbox_unchecked_color = "#fca5a5"
+        checkbox_unchecked_border = "#ef4444"
+        checkbox_checked_color = "#86efac"
+        checkbox_checked_border = "#22c55e"
+        active_menu_bg = "linear-gradient(135deg, #132238 0%, #1a2942 100%)"
+        active_menu_txt = "#FFFFFF"
     st.markdown(f"""
     <style>
     .stApp, [data-testid="stAppViewContainer"], .main .block-container {{
@@ -1677,39 +1835,46 @@ def main():
     .main {{
         background-color: transparent !important;
     }}
-    h1, h2, h3, p, .stMarkdown {{
+    h1, h2, h3, h4, h5, h6, p, .stMarkdown {{
         font-family: Calibri, 'Segoe UI', sans-serif !important;
         color: {txt_main} !important;
     }}
-    /* Botones REGISTRAR (arqueo y gastos): mismo tamaño, elevados con sombra */
+    /* Botones REGISTRAR (arqueo y gastos): metálicos 3D, bordes transparentes */
     .main .stButton > button,
-    .main form [data-testid="stFormSubmitButton"] > button {{
+    .main form [data-testid="stFormSubmitButton"] > button,
+    .main [data-testid="stDownloadButton"] > button {{
         width: 100%;
         font-family: Calibri, 'Segoe UI', sans-serif !important;
         font-size: 1.8rem !important;
         padding: 1rem 2rem !important;
         min-height: 3.2rem !important;
-        background: {btn_bg} !important;
+        background: linear-gradient(180deg, rgba(70,78,90,0.98) 0%, rgba(45,52,62,0.98) 50%, rgba(30,36,44,0.98) 100%) !important;
         color: {btn_txt} !important;
-        border: none !important;
+        border: 1px solid transparent !important;
         border-radius: 12px !important;
         font-weight: bold !important;
         letter-spacing: 0.02em !important;
-        box-shadow: 6px 8px 20px rgba(0,0,0,0.45),
-                    3px 4px 12px rgba(0,0,0,0.35) !important;
-        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease !important;
+        box-shadow: 0 0 18px rgba(91,155,213,0.25),
+                    6px 8px 20px rgba(0,0,0,0.5),
+                    3px 4px 12px rgba(0,0,0,0.4),
+                    inset 0 1px 0 rgba(255,255,255,0.1) !important;
+        transition: transform 0.2s ease, box-shadow 0.2s ease !important;
     }}
     .main .stButton > button:hover,
-    .main form [data-testid="stFormSubmitButton"] > button:hover {{
-        background: rgba(54, 59, 68, 0.35) !important;
+    .main form [data-testid="stFormSubmitButton"] > button:hover,
+    .main [data-testid="stDownloadButton"] > button:hover {{
+        background: linear-gradient(180deg, rgba(80,88,100,0.98) 0%, rgba(55,62,72,0.98) 50%, rgba(40,46,54,0.98) 100%) !important;
         transform: translateY(-3px) !important;
-        box-shadow: 8px 12px 28px rgba(0,0,0,0.5),
-                    4px 6px 16px rgba(0,0,0,0.4) !important;
+        box-shadow: 0 0 24px rgba(91,155,213,0.35),
+                    8px 12px 28px rgba(0,0,0,0.55),
+                    4px 6px 16px rgba(0,0,0,0.45),
+                    inset 0 1px 0 rgba(255,255,255,0.15) !important;
     }}
     .main .stButton > button:active,
-    .main form [data-testid="stFormSubmitButton"] > button:active {{
-        transform: translateY(-1px) !important;
-        box-shadow: 4px 6px 14px rgba(0,0,0,0.45) !important;
+    .main form [data-testid="stFormSubmitButton"] > button:active,
+    .main [data-testid="stDownloadButton"] > button:active {{
+        transform: translateY(1px) !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.5), inset 0 2px 4px rgba(0,0,0,0.3) !important;
     }}
     div[data-testid="stVerticalBlock"] > div {{
         background-color: transparent !important;
@@ -1756,8 +1921,8 @@ def main():
         font-family: Calibri, 'Segoe UI', sans-serif !important;
         font-size: 1.3rem !important;
         padding: 0.6rem !important;
-        background-color: rgba(30, 40, 55, 0.4) !important;
-        color: #FFFFFF !important;
+        background-color: {input_bg} !important;
+        color: {input_color} !important;
         border: 2px solid {AZUL_OSCURO} !important;
         border-radius: 8px !important;
         outline: none !important;
@@ -1800,11 +1965,14 @@ def main():
     }}
     [data-testid="stSelectbox"] label, [data-testid="stRadio"] label {{
         font-family: Calibri, 'Segoe UI', sans-serif !important;
-        color: #FFFFFF !important;
+        color: {txt_main} !important;
     }}
-    .stSuccess, .stAlert {{
+    div[data-testid="stNumberInput"] label {{
+        color: {txt_main} !important;
+    }}
+    .stSuccess, .stAlert, .stException, .stWarning, [data-testid="stException"] {{
         background-color: transparent !important;
-        color: #FFFFFF !important;
+        color: {txt_main} !important;
         font-family: Calibri, 'Segoe UI', sans-serif !important;
     }}
     [data-testid="stExpander"] {{
@@ -1812,20 +1980,41 @@ def main():
         border-radius: 8px !important;
     }}
     [data-testid="stExpander"] summary {{
-        color: #FFFFFF !important;
+        color: {txt_main} !important;
         font-family: Calibri, 'Segoe UI', sans-serif !important;
     }}
     [data-testid="stVerticalBlock"] {{
         background-color: transparent !important;
     }}
+    .main .stCaption, .main [data-testid="stCaption"] {{
+        color: {txt_main} !important;
+    }}
+    .main label {{
+        color: {txt_main} !important;
+    }}
+    /* Métricas (saldo, ingresos, gastos): color según tema */
+    div[data-testid="metric-container"], div[data-testid="stMetric"] label, div[data-testid="stMetric"] div {{
+        color: {txt_main} !important;
+    }}
+    /* Dataframe / tabla: texto según tema */
+    .main div[data-testid="stDataFrame"] *, .main [data-testid="stDataFrame"] td, .main [data-testid="stDataFrame"] th {{
+        color: {txt_main} !important;
+    }}
     /* Menú lateral última generación */
     section[data-testid="stSidebar"] {{
-        background: linear-gradient(180deg, #0a1220 0%, {AZUL_OSCURO} 40%, #0d2238 100%) !important;
+        background: {sidebar_bg} !important;
         box-shadow: 4px 0 24px rgba(0,0,0,0.4) !important;
     }}
-    section[data-testid="stSidebar"] .stRadio > label {{
+    section[data-testid="stSidebar"] div[data-testid="stImage"] img {{
+        max-height: 120px !important;
+        width: auto !important;
+        object-fit: contain !important;
+    }}
+    section[data-testid="stSidebar"] .stRadio > label,
+    section[data-testid="stSidebar"] .stSelectbox label,
+    section[data-testid="stSidebar"] label {{
         font-size: 0.9rem !important;
-        color: rgba(255,255,255,0.9) !important;
+        color: {sidebar_txt} !important;
     }}
     .menu-item {{
         display: block;
@@ -1836,28 +2025,29 @@ def main():
         font-family: Calibri, 'Segoe UI', sans-serif !important;
         font-size: 1.1rem !important;
         font-weight: bold;
-        color: #FFFFFF;
-        background: rgba(255,255,255,0.08);
-        border: 1px solid rgba(255,255,255,0.12);
+        color: {sidebar_txt};
+        background: {menu_bg};
+        border: 1px solid {sidebar_txt_muted};
         text-align: left;
         cursor: pointer;
         transition: all 0.25s ease;
         box-shadow: 0 2px 8px rgba(0,0,0,0.2);
     }}
     .menu-item:hover {{
-        background: rgba(255,255,255,0.15);
-        border-color: rgba(255,255,255,0.25);
+        background: {menu_bg_hover};
+        border-color: {sidebar_txt_muted};
         transform: translateX(4px);
         box-shadow: 0 4px 16px rgba(0,0,0,0.3);
     }}
     .menu-item.active {{
-        background: linear-gradient(135deg, #132238 0%, #1a2942 100%);
-        border-color: rgba(255,255,255,0.3);
+        background: {active_menu_bg};
+        color: {active_menu_txt} !important;
+        border-color: {sidebar_txt_muted};
         box-shadow: 0 4px 20px rgba(0,0,0,0.35);
     }}
     .menu-seccion {{
         font-size: 0.75rem;
-        color: rgba(255,255,255,0.6);
+        color: {sidebar_txt_muted};
         text-transform: uppercase;
         letter-spacing: 0.12em;
         margin: 1.2rem 0 0.5rem 0;
@@ -1870,19 +2060,27 @@ def main():
         font-family: Calibri, 'Segoe UI', sans-serif !important;
         font-size: 1.05rem !important;
         font-weight: bold !important;
-        background: transparent !important;
-        color: #FFFFFF !important;
-        border: none !important;
+        background: linear-gradient(180deg, rgba(55,65,78,0.9) 0%, rgba(35,42,52,0.9) 50%, rgba(25,30,38,0.9) 100%) !important;
+        color: {sidebar_txt} !important;
+        border: 1px solid transparent !important;
         text-align: left !important;
-        transition: box-shadow 0.2s ease, background 0.2s ease !important;
-        box-shadow: 4px 6px 14px rgba(0,0,0,0.4),
-                    2px 4px 8px rgba(0,0,0,0.3) !important;
+        transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+        box-shadow: 0 0 12px rgba(91,155,213,0.2),
+                    4px 6px 14px rgba(0,0,0,0.45),
+                    2px 4px 8px rgba(0,0,0,0.35),
+                    inset 0 1px 0 rgba(255,255,255,0.08) !important;
+    }}
+    section[data-testid="stSidebar"] .stCaption,
+    section[data-testid="stSidebar"] [data-testid="stMarkdown"] {{
+        color: {sidebar_txt} !important;
     }}
     section[data-testid="stSidebar"] .stButton > button:hover {{
-        background: rgba(255,255,255,0.08) !important;
-        transform: translateX(4px) !important;
-        box-shadow: 5px 8px 18px rgba(0,0,0,0.55),
-                    3px 5px 10px rgba(0,0,0,0.45) !important;
+        background: linear-gradient(180deg, rgba(65,75,88,0.95) 0%, rgba(45,52,62,0.95) 50%, rgba(35,40,48,0.95) 100%) !important;
+        transform: translateX(4px) translateY(-2px) !important;
+        box-shadow: 0 0 18px rgba(91,155,213,0.3),
+                    5px 8px 18px rgba(0,0,0,0.55),
+                    3px 5px 10px rgba(0,0,0,0.45),
+                    inset 0 1px 0 rgba(255,255,255,0.12) !important;
     }}
     </style>
     """, unsafe_allow_html=True)
@@ -1936,6 +2134,8 @@ def main():
     lista_usuarios = list(data_permisos.get("usuarios", {}).keys())
 
     with st.sidebar:
+        if os.path.exists(LOGO_PRINCIPAL):
+            st.image(LOGO_PRINCIPAL, use_container_width=True)
         st.markdown("---")
         lang = st.radio(
             t["idioma"],
@@ -2013,31 +2213,31 @@ def main():
 
     # ----- CONTENIDO PRINCIPAL SEGÚN PÁGINA -----
     if st.session_state["pagina"] == "administracion":
-        # Estilo: casillas pequeñas, verde = tiene permiso, rojo = no tiene
-        st.markdown("""
+        # Estilo: casillas pequeñas, verde = tiene permiso, rojo = no tiene (colores según tema)
+        st.markdown(f"""
         <style>
         /* Cuadraditos de permisos: marcado verde, desmarcado rojo */
-        div[data-testid="stCheckbox"] > label {
+        div[data-testid="stCheckbox"] > label {{
             padding: 0.35rem 0.5rem !important;
             border-radius: 6px !important;
-            border: 1px solid rgba(255,255,255,0.2) !important;
+            border: 1px solid {checkbox_border} !important;
             min-height: 2rem !important;
             font-size: 0.85rem !important;
-        }
-        div[data-testid="stCheckbox"]:has(input:not(:checked)) > label {
+        }}
+        div[data-testid="stCheckbox"]:has(input:not(:checked)) > label {{
             background: rgba(239, 68, 68, 0.2) !important;
-            color: #fca5a5 !important;
-            border-color: #ef4444 !important;
-        }
-        div[data-testid="stCheckbox"]:has(input:checked) > label {
+            color: {checkbox_unchecked_color} !important;
+            border-color: {checkbox_unchecked_border} !important;
+        }}
+        div[data-testid="stCheckbox"]:has(input:checked) > label {{
             background: rgba(34, 197, 94, 0.2) !important;
-            color: #86efac !important;
-            border-color: #22c55e !important;
-        }
-        div[data-testid="stCheckbox"] input[type="checkbox"] {
+            color: {checkbox_checked_color} !important;
+            border-color: {checkbox_checked_border} !important;
+        }}
+        div[data-testid="stCheckbox"] input[type="checkbox"] {{
             width: 1.1rem !important; height: 1.1rem !important;
-            accent-color: #22c55e !important;
-        }
+            accent-color: {checkbox_checked_border} !important;
+        }}
         </style>
         """, unsafe_allow_html=True)
         st.markdown(f"## ⚙️ {t['administracion_titulo']}")
@@ -2098,11 +2298,22 @@ def main():
                         data_p = cargar_permisos()
                         if uid in data_p.get("usuarios", {}):
                             pwd_plain = (pwd_nueva or "").strip()
-                            data_p["usuarios"][uid]["contrasena"] = _hash_contrasena(pwd_plain) if pwd_plain else ""
-                            if guardar_permisos(data_p, t):
-                                audit_log(usuario_actual, "contrasena_actualizada", uid)
-                                st.success(t["admin_contrasena_guardada"])
-                                st.rerun()
+                            if pwd_plain:
+                                ok_pol, msg_pol = _validar_politica_contrasena(pwd_plain)
+                                if not ok_pol:
+                                    st.warning(msg_pol)
+                                else:
+                                    data_p["usuarios"][uid]["contrasena"] = _hash_contrasena(pwd_plain)
+                                    if guardar_permisos(data_p, t):
+                                        audit_log(usuario_actual, "contrasena_actualizada", uid)
+                                        st.success(t["admin_contrasena_guardada"])
+                                        st.rerun()
+                            else:
+                                data_p["usuarios"][uid]["contrasena"] = ""
+                                if guardar_permisos(data_p, t):
+                                    audit_log(usuario_actual, "contrasena_actualizada", uid)
+                                    st.success(t["admin_contrasena_guardada"])
+                                    st.rerun()
                 with col_pwd2:
                     if st.button(t["admin_reset_contrasena"], key=f"btn_reset_pwd_{uid}"):
                         data_p = cargar_permisos()
@@ -2116,7 +2327,7 @@ def main():
         if usuario_actual == "admin" and ES_PC_MAESTRO:
             with st.expander(f"🔄 {t['reiniciar_tesoreria']}", expanded=False):
                 st.caption(t["reiniciar_explicacion"])
-                confirmacion = st.text_input(f"{t['confirmar_escribir']} **{CONFIRMACION_REINICIO}** {t['para_confirmar']}", key="confirm_reinicio", type="default")
+                confirmacion = st.text_input(f"{t['confirmar_escribir']} **{CONFIRMACION_REINICIO}** {t['para_confirmar']}", key="confirm_reinicio")
                 if st.button(t["admin_btn_reiniciar"], key="btn_reiniciar_tesoreria", type="secondary"):
                     if (confirmacion or "").strip().upper() == CONFIRMACION_REINICIO:
                         if reiniciar_tesoreria_master():
@@ -2142,6 +2353,18 @@ def main():
                             st.rerun()
                         else:
                             st.error(t["admin_error_restaurar"])
+        # Acceso maestro: restablecer admin a admin/admin (solo cuando se ingresó con contraseña universal)
+        if st.session_state.get("es_acceso_maestro") and usuario_actual == "admin":
+            with st.expander(t["acceso_maestro"], expanded=False):
+                st.caption(t["acceso_maestro_info"])
+                if st.button(t["restablecer_admin_admin"], key="btn_restablecer_admin_admin"):
+                    data = cargar_permisos()
+                    if "admin" in data.get("usuarios", {}):
+                        data["usuarios"]["admin"]["contrasena"] = ""
+                        if guardar_permisos(data, t):
+                            audit_log("admin", "admin_restablecido_admin_admin", "por acceso maestro")
+                            st.success("Admin restablecido a admin/admin. Cierre sesión y pruebe." if lang == "ES" else "Admin reset to admin/admin. Log out and try.")
+                            st.rerun()
         # PIN de administrador: establecer o cambiar
         with st.expander(t["cambiar_pin"] if _pin_admin_requerido() else t["establecer_pin"], expanded=False):
             pin_actual = st.text_input(t["pin_actual"], type="password", key="admin_pin_actual")
@@ -2167,9 +2390,9 @@ def main():
         return
 
     if st.session_state["pagina"] == "inicio":
-        # Imagen de inicio según idioma (inicio_principal.png = ES; inicio_principal_en.png = EN si existe)
-        ruta_imagen = IMAGEN_INICIO_EN if lang == "EN" and os.path.exists(IMAGEN_INICIO_EN) else IMAGEN_INICIO_ES
-        if os.path.exists(ruta_imagen):
+        # Logo principal en pantalla de inicio (fallback a imagen anterior si no hay logo)
+        ruta_imagen = IMAGEN_INICIO_ES if os.path.exists(IMAGEN_INICIO_ES) else (IMAGEN_INICIO_FALLBACK if os.path.exists(IMAGEN_INICIO_FALLBACK) else None)
+        if ruta_imagen:
             st.image(ruta_imagen, use_container_width=True)
         # Estilo: sin bordes, imagen flotando; botones 3D (solo ventana inicio)
         st.markdown("""
@@ -2204,13 +2427,9 @@ def main():
             font-size: 1.15rem !important;
             font-weight: bold !important;
             color: #fff !important;
-            border: none !important;
+            border: 1px solid transparent !important;
             border-radius: 12px !important;
             background: linear-gradient(180deg, rgba(55,65,80,0.98) 0%, rgba(30,38,48,0.98) 50%, rgba(20,26,34,0.98) 100%) !important;
-            border-top: 2px solid rgba(255,255,255,0.15) !important;
-            border-left: 2px solid rgba(255,255,255,0.08) !important;
-            border-right: 2px solid rgba(0,0,0,0.4) !important;
-            border-bottom: 2px solid rgba(0,0,0,0.5) !important;
             box-shadow: 0 0 20px rgba(91,155,213,0.2),
                         0 8px 20px rgba(0,0,0,0.5),
                         0 4px 10px rgba(0,0,0,0.4),
@@ -2284,7 +2503,8 @@ def main():
     st.markdown(f"### {t['sistema_tesoreria']}")
     st.markdown("")
 
-    df = cargar_db()
+    with st.spinner(t.get("cargando", "Cargando datos...")):
+        df = cargar_db()
     if not df.empty:
         ok_int, msg_int = verificar_integridad_ledger(df)
         if not ok_int:
@@ -2312,6 +2532,24 @@ def main():
             st.metric(t["ingresos_mes"], f"${ing_mes:,.2f}")
         with c3:
             st.metric(t["gastos_mes"], f"${gas_mes:,.2f}")
+        # Gráfico: ingresos vs gastos por mes (últimos 6 meses)
+        try:
+            df_dash["_fecha"] = pd.to_datetime(df_dash["fecha"].astype(str).str[:10], errors="coerce")
+            df_dash["_mes"] = df_dash["_fecha"].dt.to_period("M").astype(str)
+            ultimos_meses = sorted(df_dash["_mes"].dropna().unique())[-6:]
+            chart_data = []
+            for m in ultimos_meses:
+                sub = df_dash[df_dash["_mes"] == m]
+                chart_data.append({
+                    "mes": m,
+                    "Ingresos": float(sub["ingreso"].sum()),
+                    "Gastos": float(sub["gastos"].sum()),
+                })
+            if chart_data:
+                df_chart = pd.DataFrame(chart_data).set_index("mes")
+                st.bar_chart(df_chart, use_container_width=True)
+        except Exception:
+            pass
         with st.expander(f"📋 {t['conciliar']}", expanded=False):
             st.caption(t["conciliar_ayuda"])
             st.metric(t["ingresos_mes"] + " (registrado)", f"${ing_mes:,.2f}")
@@ -2319,7 +2557,7 @@ def main():
             if lo_contado > 0:
                 diff = lo_contado - ing_mes
                 if abs(diff) < 0.02:
-                    st.success("✓ Coincide con lo registrado.")
+                    st.success(t["coincide_registrado"])
                 else:
                     st.caption(f"Diferencia: ${diff:+,.2f}")
         st.markdown("---")
@@ -2478,7 +2716,7 @@ def main():
             desc_gasto = st.text_input(t["descripcion"], value=desc_sugerida, max_chars=MAX_CARACTERES_DESCRIPCION, key="desc_g")
             n_car = len(desc_gasto or "")
             st.markdown(
-                f"<p style='font-size:0.75rem; color: rgba(255,255,255,0.7); margin-top: -0.5rem;'>{n_car} / {MAX_CARACTERES_DESCRIPCION} {t['caracteres']}</p>",
+                f"<p style='font-size:0.75rem; color: {sidebar_txt_muted}; margin-top: -0.5rem;'>{n_car} / {MAX_CARACTERES_DESCRIPCION} {t['caracteres']}</p>",
                 unsafe_allow_html=True
             )
             aprobado_por_gasto = st.text_input(t["aprobado_por"] + f" {UMBRAL_GASTO_APROBACION:.0f})", key="aprobado_por_g", max_chars=100, placeholder="Nombre de quien aprueba")
@@ -2775,17 +3013,46 @@ def main():
                     if col in display_df.columns:
                         display_df[col] = display_df[col].apply(_fmt_monto_celda)
                 display_df = display_df.rename(columns=nombres_columnas)
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                # Paginación
+                total = len(display_df)
+                n_pag = max(1, (total + REGISTROS_POR_PAGINA - 1) // REGISTROS_POR_PAGINA)
+                pag_actual = st.session_state.get("pagina_hoja", 0)
+                pag_actual = min(max(0, pag_actual), n_pag - 1)
+                inicio = pag_actual * REGISTROS_POR_PAGINA
+                fin = min(inicio + REGISTROS_POR_PAGINA, total)
+                display_pag = display_df.iloc[inicio:fin]
+                st.dataframe(display_pag, use_container_width=True, hide_index=True)
+                if n_pag > 1:
+                    col_prev, col_info, col_next = st.columns([1, 2, 1])
+                    with col_prev:
+                        if st.button(t["anterior"], key="btn_prev_pag", disabled=(pag_actual == 0)):
+                            st.session_state["pagina_hoja"] = pag_actual - 1
+                            st.rerun()
+                    with col_info:
+                        st.caption(f"{t['pagina']} {pag_actual + 1} {t['de']} {n_pag} ({total} {t['registros']})")
+                    with col_next:
+                        if st.button(t["siguiente"], key="btn_next_pag", disabled=(pag_actual >= n_pag - 1)):
+                            st.session_state["pagina_hoja"] = pag_actual + 1
+                            st.rerun()
                 if tiene_permiso(usuario_actual, "ver_eliminar_registros"):
                     st.markdown(f"**{t['limpiar_fila']}** (solo dentro de 30 min):")
+                    pendiente = st.session_state.get("eliminar_pendiente")
                     for i, row in filtered.iterrows():
                         if row["puede_borrar"]:
-                            if st.button(f"✕ {t['eliminar']} — {row.get('id_registro', i)}", key=f"del_{row.get('id_registro', i)}_{i}"):
-                                id_borrado = row.get("id_registro", i)
-                                df = df.drop(index=i).reset_index(drop=True)
-                                if guardar_db(df, t):
-                                    audit_log(usuario_actual, "registro_eliminado", str(id_borrado))
+                            id_reg = row.get("id_registro", i)
+                            if pendiente == (i, id_reg):
+                                if st.button(f"✓ {t['confirmar_eliminar']} {id_reg}", key=f"confirm_del_{i}"):
+                                    df = df.drop(index=i).reset_index(drop=True)
+                                    st.session_state.pop("eliminar_pendiente", None)
+                                    if guardar_db(df, t):
+                                        audit_log(usuario_actual, "registro_eliminado", str(id_reg))
+                                        st.rerun()
+                                if st.button("✕ Cancelar", key=f"cancel_del_{i}"):
+                                    st.session_state.pop("eliminar_pendiente", None)
                                     st.rerun()
+                            elif st.button(f"✕ {t['eliminar']} — {id_reg}", key=f"del_{id_reg}_{i}"):
+                                st.session_state["eliminar_pendiente"] = (i, id_reg)
+                                st.rerun()
             if ES_PC_MAESTRO:
                 st.markdown("---")
                 st.markdown(f"**{t['limpiar_todo_tablero']}**")
@@ -2814,25 +3081,42 @@ def main():
                     df_hoja = df_hoja.sort_values("fecha", ascending=True).reset_index(drop=True)
                     df_hoja = _recalcular_totales_ledger(df_hoja)
                 pdf_hoja = generar_pdf_hoja_contable(df_hoja, lang)
+                pdf_hoja.seek(0)
                 st.download_button(
                     label=t["exportar_hoja_pdf"],
-                    data=pdf_hoja,
+                    data=pdf_hoja.getvalue(),
                     file_name=f"Hoja_Contable_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
                     mime="application/pdf",
                     key="download_hoja_pdf"
                 )
-    # Exportar CSV para contador (Excel-compatible, UTF-8 BOM)
+    # Exportar CSV y Excel para contador
     if tiene_permiso(usuario_actual, "ver_exportar_hoja_pdf") or tiene_permiso(usuario_actual, "ver_hoja_contable"):
         df_exp = cargar_db()
         if not df_exp.empty:
-            csv_bytes = "\ufeff" + df_exp.to_csv(index=False, encoding="utf-8", date_format="%Y-%m-%d")
-            st.download_button(
-                label=t["exportar_contador"],
-                data=csv_bytes.encode("utf-8"),
-                file_name=f"Tesorería_contador_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                mime="text/csv",
-                key="download_contador"
-            )
+            col_csv, col_xlsx = st.columns(2)
+            with col_csv:
+                csv_bytes = "\ufeff" + df_exp.to_csv(index=False, encoding="utf-8", date_format="%Y-%m-%d")
+                st.download_button(
+                    label=t["exportar_contador"],
+                    data=csv_bytes.encode("utf-8"),
+                    file_name=f"Tesorería_contador_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                    mime="text/csv",
+                    key="download_contador"
+                )
+            with col_xlsx:
+                try:
+                    buf_xlsx = BytesIO()
+                    df_exp.to_excel(buf_xlsx, index=False, engine="openpyxl")
+                    buf_xlsx.seek(0)
+                    st.download_button(
+                        label=t["exportar_excel"],
+                        data=buf_xlsx.getvalue(),
+                        file_name=f"Tesorería_contador_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="download_excel"
+                    )
+                except Exception:
+                    pass
 
     # ---------- INFORME PDF PARA WHATSAPP ----------
     if tiene_permiso(usuario_actual, "ver_informe_pdf"):
@@ -2855,9 +3139,10 @@ def main():
                 else:
                     ultimo_arqueo = "$0.00"
             pdf_bytes = generar_pdf(df, lang, saldo, ultimo_arqueo)
+            pdf_bytes.seek(0)
             st.download_button(
                 label=t["descargar_pdf_whatsapp"],
-                data=pdf_bytes,
+                data=pdf_bytes.getvalue(),
                 file_name=f"Informe_Tesorería_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
                 mime="application/pdf",
                 key="download_pdf"

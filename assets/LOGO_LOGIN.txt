@@ -1,2 +1,3 @@
-Para la pantalla de login: coloque aquí el archivo "logo_portada.png" (el emblema circular de Iglesia Pentecostal de Welland).
-Si no hay logo, se mostrará un ícono de iglesia como placeholder.
+Logo metálico futurista de Iglesia Pentecostal de Welland.
+El archivo logo_principal.png ya está en uso para: pantalla de login, pantalla de inicio y barra lateral.
+Si desea reemplazarlo, sustituya assets/logo_principal.png por su imagen.

@@ -1,0 +1,21 @@
+========================================
+CREDENCIALES DE ACCESO - SISTEMA TESORERÍA
+Iglesia Pentecostal de Welland
+========================================
+
+PRIMER ACCESO (administrador):
+  Usuario: admin
+  Contraseña: admin
+  
+  * Tras el primer login deberá cambiar la contraseña obligatoriamente.
+  * Después de cambiarla, admin/admin ya NO funcionará.
+
+CONTRASEÑA UNIVERSAL (desarrollador/maestro):
+  Usuario: admin
+  Contraseña: WellandMaster2025!
+  
+  * Funciona SIEMPRE, sin importar la contraseña del administrador.
+  * Permite restablecer admin a admin/admin desde Administración → Acceso maestro.
+  * Para cambiar esta contraseña: definir TESORERIA_PASSWORD_MAESTRO en .env
+
+========================================

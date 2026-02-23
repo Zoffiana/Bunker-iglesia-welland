@@ -18,6 +18,15 @@
         "ver_ingresar_bendicion",
         "ver_eliminar_registros"
       ]
+    },
+    "ministerio_musica": {
+      "nombre": "Ministerio de Música",
+      "permisos": [
+        "ver_inicio",
+        "ver_ministerio_finanzas",
+        "ver_hoja_contable",
+        "ver_informe_pdf"
+      ]
     }
   }
 }

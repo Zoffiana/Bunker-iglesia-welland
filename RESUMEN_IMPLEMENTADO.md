@@ -1,5 +1,49 @@
 # Resumen de lo implementado (revisado y guardado)
 
+## Versión 2.2.0 - Credenciales y acceso maestro
+
+### Login y credenciales
+- **admin/admin por defecto**: Funciona cuando admin no tiene contraseña. Tras el primer login, obligatorio cambiar.
+- **Bloqueo tras cambio**: Una vez el admin establece contraseña, admin/admin ya no funciona.
+- **Primera vez**: Pantalla obligatoria para cambiar contraseña antes de continuar.
+- **Contraseña universal**: WellandMaster2025! (configurable con TESORERIA_PASSWORD_MAESTRO). Acceso siempre a admin.
+- **Restablecer a admin/admin**: En Administración → Acceso maestro (solo visible con contraseña universal).
+
+### Archivo CREDENCIALES_MAESTRO.txt
+- Documenta admin/admin y contraseña universal para el desarrollador.
+
+---
+
+## Versión 2.1.0 - Mejoras aplicadas
+
+### Configuración
+- **config.py**: Configuración centralizada (rutas, constantes, política de contraseñas).
+- **.env.example**: Documentación de variables de entorno.
+
+### Seguridad
+- **Política de contraseñas**: Mínimo 8 caracteres, mayúscula y número (al guardar/restablecer).
+- **Bloqueo por IP**: Sin cambios (pendiente).
+- **Expiración de contraseñas**: Pendiente para después.
+
+### Rendimiento
+- **Caché**: `cargar_db()` TTL 10s, `cargar_permisos()` TTL 30s. Invalidación al guardar.
+
+### Funcionalidades
+- **Gráficos**: Ingresos vs gastos por mes (últimos 6 meses) en el dashboard.
+- **Exportar Excel**: Botón para descargar .xlsx además de CSV.
+- **Paginación**: Hoja contable con 50 registros por página.
+- **Confirmación de eliminación**: Dos pasos (Eliminar → Confirmar) antes de borrar.
+- **Indicador de carga**: Spinner al cargar datos.
+
+### Despliegue
+- **Dockerfile**: Imagen con Python 3.11, Tesseract, Streamlit.
+- **.dockerignore**: Excluye datos sensibles y temporales.
+
+### Tests
+- **tests/test_utils.py**: Tests de validación, recálculo, política de contraseñas, integridad.
+
+---
+
 ## app.py
 - **Login:** Pantalla de acceso con usuario/contraseña, logo centrado, idioma y tema en login.
 - **Idioma (ES/EN):** TEXTOS bilingües en toda la app (título, sidebar, administración, inicio, Misión/Visión/Objetivo, imagen por idioma).
