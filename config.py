@@ -23,6 +23,14 @@ DB_FACTURAS = os.environ.get("TESORERIA_DB_FACTURAS", os.path.join(_BASE_DIR, "D
 if not os.path.isabs(DB_FACTURAS):
     DB_FACTURAS = os.path.join(_BASE_DIR, DB_FACTURAS)
 
+DB_ARQUEO_META = os.environ.get("TESORERIA_DB_ARQUEO_META", os.path.join(_BASE_DIR, "DB_ARQUEO_META.json"))
+if not os.path.isabs(DB_ARQUEO_META):
+    DB_ARQUEO_META = os.path.join(_BASE_DIR, DB_ARQUEO_META)
+
+DB_SUMINISTROS = os.environ.get("TESORERIA_DB_SUMINISTROS", os.path.join(_BASE_DIR, "DB_SUMINISTROS.json"))
+if not os.path.isabs(DB_SUMINISTROS):
+    DB_SUMINISTROS = os.path.join(_BASE_DIR, DB_SUMINISTROS)
+
 AUDIT_LOG = os.environ.get("TESORERIA_AUDIT_LOG", os.path.join(_BASE_DIR, "auditoria_tesoreria.log"))
 if not os.path.isabs(AUDIT_LOG):
     AUDIT_LOG = os.path.join(_BASE_DIR, AUDIT_LOG)

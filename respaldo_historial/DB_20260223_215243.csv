@@ -1,0 +1,4 @@
+id_registro,fecha,detalle,tipo_gasto,ingreso,gastos,total_ingresos,total_gastos,saldo_actual
+AC-2026-02-21-23-40-56,2026-02-21 23:40:56,Arqueo - GENERAL,Ofrenda del culto,642.35,0.0,642.35,0.0,642.35
+RG-2026-02-21-23-41-09,2026-02-21 23:41:09,Gasto,Operativo,0.0,5874.45,642.35,5874.45,-5232.099999999999
+RG-2026-02-23-18-32-44,2026-02-23 18:32:44,Gasto,Operativo,0.0,5.0,642.35,5879.45,-5237.099999999999

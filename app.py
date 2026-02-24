@@ -7,6 +7,13 @@ Aplicación ultra-didáctica para adultos mayores.
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    _PLOTLY_DISPONIBLE = True
+except ImportError:
+    _PLOTLY_DISPONIBLE = False
 import os
 import json
 import shutil
@@ -27,7 +34,7 @@ except ImportError:
 
 # Configuración centralizada
 from config import (
-    VERSION_APP, DB_ARCHIVO, DB_PERMISOS, DB_FACTURAS, AUDIT_LOG, LOGIN_INTENTOS,
+    VERSION_APP, DB_ARCHIVO, DB_PERMISOS, DB_FACTURAS, DB_ARQUEO_META, DB_SUMINISTROS, AUDIT_LOG, LOGIN_INTENTOS,
     MAX_INTENTOS_LOGIN, MINUTOS_BLOQUEO_LOGIN, IMAGEN_COMPRIMIR_MAX_ANCHO, IMAGEN_COMPRIMIR_CALIDAD,
     MINUTOS_BORRADO, MINUTOS_INACTIVIDAD, CARPETA_HISTORIAL, CARPETA_RESETS, MAX_RESPALDOS,
     CONFIRMACION_REINICIO, CONFIRMACION_LIMPIAR_TODO, UMBRAL_GASTO_APROBACION, PIN_ADMIN_ENV,
@@ -326,6 +333,12 @@ def _render_pantalla_login():
         st.error(t["login_bloqueado"].format(min=MINUTOS_BLOQUEO_LOGIN))
         return
 
+    if st.session_state.get("recordar_sesion") and "login_usuario_guardado" in st.session_state:
+        if "login_usuario_input" not in st.session_state:
+            st.session_state["login_usuario_input"] = st.session_state.get("login_usuario_guardado", "")
+        if "login_contrasena_input" not in st.session_state:
+            st.session_state["login_contrasena_input"] = st.session_state.get("login_contrasena_guardada", "")
+
     ultima = _ultima_actividad_audit()
     if ultima:
         st.markdown(f"<p class='login-dashboard'>📋 {t['login_ultima_actividad']}: {ultima['fecha']} — {ultima['usuario']} ({ultima['accion']})</p>",
@@ -351,7 +364,7 @@ def _render_pantalla_login():
                                 label_visibility="visible")
         contrasena = st.text_input(t["login_contrasena"], type="password", key="login_contrasena_input",
                                     placeholder="••••••••", label_visibility="visible")
-        recordar = st.checkbox(t["login_recordar"], key="login_recordar", value=False)
+        recordar = st.checkbox(t["login_recordar"], key="login_recordar", value=st.session_state.get("recordar_sesion", False))
         submitted = st.form_submit_button(t["login_btn"])
         if submitted:
             if usuario and contrasena:
@@ -363,6 +376,13 @@ def _render_pantalla_login():
                     if uid == "admin":
                         st.session_state["admin_autorizado"] = True
                     st.session_state["recordar_sesion"] = recordar
+                    if recordar:
+                        st.session_state["login_usuario_guardado"] = usuario.strip()
+                        st.session_state["login_contrasena_guardada"] = contrasena
+                    else:
+                        for k in ("login_usuario_guardado", "login_contrasena_guardada"):
+                            if k in st.session_state:
+                                del st.session_state[k]
                     if extra == "primera_vez":
                         st.session_state["debe_cambiar_credenciales"] = True
                     elif extra == "maestro":
@@ -421,7 +441,10 @@ def _render_pantalla_cambiar_credenciales():
 # Permisos que el administrador puede activar/desactivar por usuario
 PERMISOS_DISPONIBLES = [
     ("ver_inicio", "VER INICIO"),
-    ("ver_ministerio_finanzas", "VER MINISTERIO FINANZAS"),
+    ("ver_arqueo_caja", "VER ARQUEO DE CAJA (Cierre Diario)"),
+    ("ver_tesoreria", "VER TESORERÍA (Libro de Registros)"),
+    ("ver_contabilidad", "VER CONTABILIDAD (Bóveda Histórica)"),
+    ("ver_presupuesto_metas", "VER PRESUPUESTO Y METAS"),
     ("ver_ingresar_bendicion", "VER INGRESAR BENDICIÓN"),
     ("ver_registrar_gasto", "VER REGISTRAR GASTO"),
     ("ver_hoja_contable", "VER HOJA CONTABLE"),
@@ -467,6 +490,28 @@ TEXTOS = {
         "monto": "MONTO ($)",
         "descripcion": "DESCRIPCIÓN",
         "tomar_foto": "TOMAR FOTO O SUBIR IMAGEN",
+        "suministros": "Suministros",
+        "gastos_frecuentes": "Gastos frecuentes",
+        "gasto_refrescar": "Refrescar",
+        "gasto_refrescar_ayuda": "Vacía el formulario para volver a llenarlo.",
+        "gasto_sugerencias": "Sugerencias",
+        "modo_escaneo_rapido": "Modo escaneo rápido (solo foto + monto)",
+        "ocr_diferencia_aviso": "⚠️ El monto manual (${manual:.2f}) difiere del detectado por OCR (${ocr:.2f}). Verifique.",
+        "reintentar_ocr": "Reintentar OCR",
+        "vista_previa_factura": "Vista previa",
+        "foto_multiples_ayuda": "Puede subir varias fotos (frente, reverso, anexos).",
+        "foto_frente": "Frente",
+        "foto_reverso": "Reverso",
+        "foto_anexo": "Anexo",
+        "ocr_sin_datos": "No se detectó información. Use «Reintentar OCR» o ingrese los datos manualmente.",
+        "importar_gastos": "Importar gastos (CSV/Excel)",
+        "importar_gastos_ayuda": "Suba un archivo CSV o Excel con columnas: fecha, detalle, tipo_gasto, gastos",
+        "recordatorios_recurrentes": "Recordatorios recurrentes",
+        "recordatorios_pendientes": "Suministros que podrían estar pendientes este mes:",
+        "recordatorios_todos_ok": "Todos los suministros habituales parecen registrados este mes.",
+        "recordatorios_registre": "Registre gastos para ver recordatorios.",
+        "gasto_teclado_movil": "En móvil: use el teclado numérico para montos.",
+        "gasto_aprobado_requerido": "Gastos ≥ $500 requieren nombre válido en Aprobado por.",
         "gasto_registrado": "GASTO REGISTRADO.",
         "bendicion_registrada": "BENDICIÓN REGISTRADA.",
         "borrar_solo_30min": "BORRADO SOLO PERMITIDO DURANTE 30 MINUTOS.",
@@ -492,6 +537,14 @@ TEXTOS = {
         "inicio": "INICIO",
         "ministerio_finanzas": "MINISTERIO DE FINANZAS",
         "sistema_tesoreria": "SISTEMA DE TESORERÍA",
+        "arqueo_caja": "ARQUEO DE CAJA",
+        "arqueo_caja_sub": "Cierre Diario — Conteo físico del día",
+        "tesoreria": "TESORERÍA",
+        "tesoreria_sub": "Libro de Registros — Ingresos y Gastos",
+        "contabilidad": "CONTABILIDAD",
+        "contabilidad_sub": "Bóveda Histórica — Reportes y archivos",
+        "presupuesto_metas": "PRESUPUESTO Y METAS",
+        "presupuesto_metas_sub": "Visión — Planeación de proyectos",
         "bienvenida_titulo": "BIENVENIDO",
         "bienvenida_texto": "SELECCIONE UNA OPCIÓN DEL MENÚ PARA CONTINUAR.",
         "sistema_operaciones": "SISTEMA DE OPERACIONES",
@@ -515,6 +568,11 @@ TEXTOS = {
         "col_tipo_gasto": "TIPO",
         "tipo_gasto": "TIPO DE GASTO",
         "exportar_hoja_pdf": "EXPORTAR HOJA CONTABLE PDF",
+        "exportar_hoja_contable_titulo": "Exportar hoja contable",
+        "exportar_hoja_contable_ayuda": "Descargue la hoja contable en el formato que prefiera: PDF para imprimir, Excel para editar o CSV para el contador.",
+        "exportar_opcion_pdf": "PDF",
+        "exportar_opcion_excel": "Excel (.xlsx)",
+        "exportar_opcion_contador": "Para contador (CSV)",
         "informe_auditoria": "INFORME DE AUDITORÍA CONTABLE",
         "situacion_actual": "SITUACIÓN ACTUAL",
         "superavit": "SUPERÁVIT",
@@ -565,8 +623,21 @@ TEXTOS = {
         "filtrar_tipo": "Tipo",
         "todos_los_tipos": "Todos los tipos",
         "limpiar_fila": "Limpiar esta fila",
+        "borrar_btn": "Borrar",
+        "borrar_seleccionados": "Borrar seleccionados",
+        "borrar_todos": "Borrar todos",
+        "seleccionar_todos": "Seleccionar todos",
         "limpiar_todo_tablero": "Limpiar todo el tablero",
         "confirmar_limpiar_todo": "Escriba BORRAR TODO para vaciar la hoja.",
+        "maestro_borrar_titulo": "BORRAR REGISTROS (SOLO ACCESO MAESTRO)",
+        "maestro_borrar_todo": "BORRAR TODO",
+        "maestro_borrar_masa": "Borrar seleccionados",
+        "maestro_seleccionar_masa": "Seleccione filas para borrar en masa:",
+        "maestro_borrar_detalle": "Borrar por detalle",
+        "maestro_seleccionar_detalle": "Escriba texto que contenga el detalle (ej: compra, alquiler). Se borrarán todos los registros cuyo detalle coincida.",
+        "maestro_coinciden_registros": "Coinciden {n} registro(s).",
+        "maestro_sin_limite": "sin límite de tiempo",
+        "solo_30min": "solo dentro de 30 min",
         "arqueo_cero": "El total del arqueo es $0. No se registró.",
         "gasto_cero": "El monto del gasto es $0. No se registró.",
         "sin_resultados_filtro": "No hay registros que coincidan con los filtros aplicados.",
@@ -659,8 +730,47 @@ TEXTOS = {
         "saldo_actual": "Saldo actual",
         "ingresos_mes": "Ingresos del mes",
         "gastos_mes": "Gastos del mes",
+        "grafico_ingresos_gastos": "Ingresos vs Gastos por mes",
+        "grafico_resultado": "Resultado (Ingresos − Gastos)",
+        "grafico_trazabilidad": "Trazabilidad del saldo (alza/baja en el tiempo)",
+        "grafico_saldo": "Saldo",
+        "grafico_alza": "Alza",
+        "grafico_baja": "Baja",
+        "grafico_var": "Variación",
+        "grafico_ver_ingresos_gastos": "Ver cuadro Ingresos & Gastos",
         "conciliar": "CONCILIAR INGRESOS",
         "conciliar_ayuda": "Compare el total registrado con lo que contó en caja (opcional).",
+        "conciliar_por_dia": "Conciliar por día",
+        "fecha_conciliar": "Fecha a conciliar",
+        "contado_por": "Contado por",
+        "contado_por_ayuda": "Obligatorio. Seleccione o escriba. Se guarda en mayúsculas para futuros arqueos.",
+        "verificado_por": "Verificado por",
+        "verificado_por_ayuda": "Obligatorio. Solo después de Contado por.",
+        "arqueo_llenar_ambos": "Debe llenar Contado por y Verificado por antes de continuar.",
+        "arqueo_otro": "Otro (escribir nuevo)",
+        "arqueo_sugerencias": "Sugerencias",
+        "arqueo_refrescar": "Refrescar",
+        "arqueo_refrescar_ayuda": "Vacía el formulario para volver a llenarlo.",
+        "arqueo_nombre_invalido": "El nombre no debe contener solo números.",
+        "arqueo_nombre_simbolos": "El nombre no debe contener símbolos (@#$%...).",
+        "arqueo_nombre_muy_corto": "Ingrese al menos 2 caracteres (evite solo iniciales o una letra).",
+        "arqueo_teclado_movil": "En móvil: use el teclado numérico para billetes y monedas.",
+        "arqueo_total_calculado": "Total billetes + monedas",
+        "sobres_cantidad": "Nº de sobres",
+        "sobres_total": "Total en sobres ($)",
+        "total_suelto": "Total suelto ($)",
+        "cheques_cantidad": "Nº de cheques",
+        "cheques_total": "Total cheques ($)",
+        "fondo_caja": "Fondo de caja inicial ($)",
+        "descargar_hoja_arqueo": "Descargar hoja de arqueo",
+        "descargar_hoja_arqueo_ayuda": "Seleccione el arqueo y descargue en PDF o Excel. Archivos comprimidos para enviar por WhatsApp, abren en cualquier dispositivo.",
+        "seleccionar_arqueo": "Seleccionar arqueo",
+        "hoja_arqueo_pdf": "PDF",
+        "hoja_arqueo_excel": "Excel (.xlsx)",
+        "resumen_dia": "Resumen del día",
+        "cerrar_arqueo": "Cerrar arqueo del día",
+        "arqueo_cerrado": "Arqueo cerrado",
+        "col_ip": "IP",
         "presupuesto_vs_real": "Presupuesto vs real",
         "primera_vez": "¿Primera vez aquí?",
         "ayuda_rapida": "Guía rápida: use el menú para Inicio, Ministerio de Finanzas o Administración. Los ingresos se registran en Ingresar bendición; los gastos en Registrar gasto. Respaldos automáticos en cada guardado.",
@@ -714,6 +824,28 @@ TEXTOS = {
         "monto": "AMOUNT ($)",
         "descripcion": "DESCRIPTION",
         "tomar_foto": "TAKE PHOTO OR UPLOAD IMAGE",
+        "suministros": "Supplies",
+        "gastos_frecuentes": "Frequent expenses",
+        "gasto_refrescar": "Refresh",
+        "gasto_refrescar_ayuda": "Clears the form to fill again.",
+        "gasto_sugerencias": "Suggestions",
+        "modo_escaneo_rapido": "Quick scan mode (photo + amount only)",
+        "ocr_diferencia_aviso": "⚠️ Manual amount (${manual:.2f}) differs from OCR detected (${ocr:.2f}). Please verify.",
+        "reintentar_ocr": "Retry OCR",
+        "vista_previa_factura": "Preview",
+        "foto_multiples_ayuda": "You can upload multiple photos (front, back, attachments).",
+        "foto_frente": "Front",
+        "foto_reverso": "Back",
+        "foto_anexo": "Attachment",
+        "ocr_sin_datos": "No information detected. Use «Retry OCR» or enter data manually.",
+        "importar_gastos": "Import expenses (CSV/Excel)",
+        "importar_gastos_ayuda": "Upload CSV or Excel with columns: fecha, detalle, tipo_gasto, gastos",
+        "recordatorios_recurrentes": "Recurring reminders",
+        "recordatorios_pendientes": "Supplies that may be pending this month:",
+        "recordatorios_todos_ok": "All usual supplies appear to be registered this month.",
+        "recordatorios_registre": "Register expenses to see reminders.",
+        "gasto_teclado_movil": "On mobile: use numeric keypad for amounts.",
+        "gasto_aprobado_requerido": "Expenses ≥ $500 require valid name in Approved by.",
         "gasto_registrado": "EXPENSE REGISTERED.",
         "bendicion_registrada": "BLESSING REGISTERED.",
         "borrar_solo_30min": "DELETION ONLY ALLOWED WITHIN 30 MINUTES.",
@@ -739,6 +871,14 @@ TEXTOS = {
         "inicio": "HOME",
         "ministerio_finanzas": "FINANCE MINISTRY",
         "sistema_tesoreria": "TREASURY SYSTEM",
+        "arqueo_caja": "CASH COUNT",
+        "arqueo_caja_sub": "Daily Close — Physical count of the day",
+        "tesoreria": "TREASURY",
+        "tesoreria_sub": "Ledger — Income and Expenses",
+        "contabilidad": "ACCOUNTING",
+        "contabilidad_sub": "Historic Vault — Reports and files",
+        "presupuesto_metas": "BUDGET & GOALS",
+        "presupuesto_metas_sub": "Vision — Project planning",
         "bienvenida_titulo": "WELCOME",
         "bienvenida_texto": "SELECT AN OPTION FROM THE MENU TO CONTINUE.",
         "sistema_operaciones": "OPERATIONS SYSTEM",
@@ -762,6 +902,11 @@ TEXTOS = {
         "col_tipo_gasto": "TYPE",
         "tipo_gasto": "EXPENSE TYPE",
         "exportar_hoja_pdf": "EXPORT LEDGER PDF",
+        "exportar_hoja_contable_titulo": "Export ledger",
+        "exportar_hoja_contable_ayuda": "Download the ledger in your preferred format: PDF for printing, Excel for editing, or CSV for the accountant.",
+        "exportar_opcion_pdf": "PDF",
+        "exportar_opcion_excel": "Excel (.xlsx)",
+        "exportar_opcion_contador": "For accountant (CSV)",
         "informe_auditoria": "FINANCIAL AUDIT REPORT",
         "situacion_actual": "CURRENT SITUATION",
         "superavit": "SURPLUS",
@@ -812,8 +957,21 @@ TEXTOS = {
         "filtrar_tipo": "Type",
         "todos_los_tipos": "All types",
         "limpiar_fila": "Clear this row",
+        "borrar_btn": "Delete",
+        "borrar_seleccionados": "Delete selected",
+        "borrar_todos": "Delete all",
+        "seleccionar_todos": "Select all",
         "limpiar_todo_tablero": "Clear entire table",
         "confirmar_limpiar_todo": "Type CLEAR ALL to empty the ledger.",
+        "maestro_borrar_titulo": "DELETE RECORDS (MASTER ACCESS ONLY)",
+        "maestro_borrar_todo": "DELETE ALL",
+        "maestro_borrar_masa": "Delete selected",
+        "maestro_seleccionar_masa": "Select rows to delete in bulk:",
+        "maestro_borrar_detalle": "Delete by detail",
+        "maestro_seleccionar_detalle": "Type text contained in the detail (e.g. purchase, rent). All records whose detail matches will be deleted.",
+        "maestro_coinciden_registros": "{n} record(s) match.",
+        "maestro_sin_limite": "no time limit",
+        "solo_30min": "only within 30 min",
         "arqueo_cero": "Count total is $0. Not recorded.",
         "gasto_cero": "Expense amount is $0. Not recorded.",
         "sin_resultados_filtro": "No records match the current filters.",
@@ -906,8 +1064,47 @@ TEXTOS = {
         "saldo_actual": "Current balance",
         "ingresos_mes": "Income this month",
         "gastos_mes": "Expenses this month",
+        "grafico_ingresos_gastos": "Income vs Expenses by month",
+        "grafico_resultado": "Result (Income − Expenses)",
+        "grafico_trazabilidad": "Balance traceability (rise/fall over time)",
+        "grafico_saldo": "Balance",
+        "grafico_alza": "Rise",
+        "grafico_baja": "Fall",
+        "grafico_var": "Change",
+        "grafico_ver_ingresos_gastos": "Show Income & Expenses chart",
         "conciliar": "RECONCILE INCOME",
         "conciliar_ayuda": "Compare registered total with what you counted in cash (optional).",
+        "conciliar_por_dia": "Reconcile by day",
+        "fecha_conciliar": "Date to reconcile",
+        "contado_por": "Counted by",
+        "contado_por_ayuda": "Required. Select or type. Saved in uppercase for future counts.",
+        "verificado_por": "Verified by",
+        "verificado_por_ayuda": "Required. Only after Counted by.",
+        "arqueo_llenar_ambos": "You must fill Counted by and Verified by before continuing.",
+        "arqueo_otro": "Other (type new)",
+        "arqueo_sugerencias": "Suggestions",
+        "arqueo_refrescar": "Refresh",
+        "arqueo_refrescar_ayuda": "Clears the form to fill again.",
+        "arqueo_nombre_invalido": "Name should not contain only numbers.",
+        "arqueo_nombre_simbolos": "Name should not contain symbols (@#$%...).",
+        "arqueo_nombre_muy_corto": "Enter at least 2 characters (avoid single letter or initial only).",
+        "arqueo_teclado_movil": "On mobile: use numeric keyboard for bills and coins.",
+        "arqueo_total_calculado": "Total bills + coins",
+        "sobres_cantidad": "No. of envelopes",
+        "sobres_total": "Total in envelopes ($)",
+        "total_suelto": "Loose total ($)",
+        "cheques_cantidad": "No. of checks",
+        "cheques_total": "Total checks ($)",
+        "fondo_caja": "Opening cash fund ($)",
+        "descargar_hoja_arqueo": "Download count sheet",
+        "descargar_hoja_arqueo_ayuda": "Select the count and download in PDF or Excel. Compressed files for WhatsApp, open on any device.",
+        "seleccionar_arqueo": "Select count",
+        "hoja_arqueo_pdf": "PDF",
+        "hoja_arqueo_excel": "Excel (.xlsx)",
+        "resumen_dia": "Daily summary",
+        "cerrar_arqueo": "Close day count",
+        "arqueo_cerrado": "Count closed",
+        "col_ip": "IP",
         "presupuesto_vs_real": "Budget vs actual",
         "primera_vez": "First time here?",
         "ayuda_rapida": "Quick guide: use the menu for Home, Finance Ministry or Administration. Income is entered in Enter blessing; expenses in Register expense. Automatic backups on each save.",
@@ -946,12 +1143,13 @@ MINISTERIOS = ["GENERAL", "CABALLEROS", "DAMAS", "JÓVENES", "NIÑOS", "MÚSICA"
 MINISTERIOS_EN = ["GENERAL", "MEN", "WOMEN", "YOUTH", "CHILDREN", "MUSIC"]
 
 # Tipos de gasto universales y modernos (ES label, EN label). Se guarda el valor ES en CSV.
+# Recurrentes = primero (suministros por pagar: luz, agua, etc.). Operativo = gastos frecuentes del historial.
 TIPOS_GASTO_ES = [
-    "Operativo", "Mantenimiento", "Servicios", "Suministros", "Programas",
+    "Recurrentes", "Operativo", "Mantenimiento", "Servicios", "Programas",
     "Equipo y tecnología", "Donaciones y ofrendas", "Otros"
 ]
 TIPOS_GASTO_EN = [
-    "Operational", "Maintenance", "Utilities", "Supplies", "Programs",
+    "Recurring", "Operational", "Maintenance", "Utilities", "Programs",
     "Equipment & tech", "Donations & offerings", "Other"
 ]
 DEFAULT_TIPO_GASTO = "Otros"  # para registros antiguos o sin tipo
@@ -968,8 +1166,8 @@ TIPOS_INGRESO_EN = [
 DEFAULT_TIPO_INGRESO = "Ofrenda del culto"
 
 # Medios de pago para ingresos (diezmos, ofrendas por POS/tarjeta/transferencia)
-MEDIOS_PAGO_ES = ["Efectivo (arqueo de billetes y monedas)", "POS / Tarjeta de crédito", "Tarjeta de débito", "Transferencia bancaria"]
-MEDIOS_PAGO_EN = ["Cash (bills and coins count)", "POS / Credit card", "Debit card", "Bank transfer"]
+MEDIOS_PAGO_ES = ["Efectivo (arqueo de billetes y monedas)", "POS / Tarjeta de crédito", "Tarjeta de débito", "Transferencia bancaria", "Cheques"]
+MEDIOS_PAGO_EN = ["Cash (bills and coins count)", "POS / Credit card", "Debit card", "Bank transfer", "Checks"]
 MEDIO_EFECTIVO_ES = "Efectivo (arqueo de billetes y monedas)"
 MEDIO_EFECTIVO_EN = "Cash (bills and coins count)"
 
@@ -1185,6 +1383,144 @@ def guardar_db(df, t=None):
         return False
 
 
+def _get_client_ip():
+    """Obtiene la IP del dispositivo cliente. Solo visible para acceso maestro."""
+    try:
+        headers = getattr(st, "context", None) and getattr(st.context, "headers", None)
+        if headers and isinstance(headers, dict):
+            return (headers.get("X-Forwarded-For") or headers.get("X-Real-Ip") or "").split(",")[0].strip() or "N/A"
+    except Exception:
+        pass
+    return "N/A"
+
+
+def cargar_arqueo_meta():
+    """Carga metadatos de arqueos (contado_por, verificado_por, ip, desglose, etc.)."""
+    if not os.path.exists(DB_ARQUEO_META):
+        return {}
+    try:
+        with open(DB_ARQUEO_META, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _nombres_arqueo_desde_meta(meta):
+    """Extrae listas de nombres (mayúsculas) ordenados por frecuencia de uso (más usados primero)."""
+    from collections import Counter
+    contado_list = []
+    verificado_list = []
+    for rid, datos in (meta or {}).items():
+        if rid.startswith("_"):
+            continue
+        if isinstance(datos, dict):
+            c = (datos.get("contado_por") or "").strip().upper()
+            v = (datos.get("verificado_por") or "").strip().upper()
+            if c:
+                contado_list.append(c)
+            if v:
+                verificado_list.append(v)
+    cnt_c = Counter(contado_list)
+    cnt_v = Counter(verificado_list)
+    return [n for n, _ in cnt_c.most_common()], [n for n, _ in cnt_v.most_common()]
+
+
+def _validar_nombre_arqueo(texto):
+    """Valida que el nombre no sea solo números, tenga al menos 2 caracteres, ni caracteres inválidos. Devuelve (True, None) o (False, msg_key)."""
+    t = (texto or "").strip()
+    if not t:
+        return True, None
+    if len(t) < 2:
+        return False, "arqueo_nombre_muy_corto"
+    digitos = sum(1 for c in t if c.isdigit())
+    if digitos >= len(t) * 0.5:
+        return False, "arqueo_nombre_invalido"
+    if any(c in t for c in "@#$%^&*()+={}[]|\\<>?"):
+        return False, "arqueo_nombre_simbolos"
+    return True, None
+
+
+def _normalizar_y_coincidir(texto, lista_existentes):
+    """Convierte a mayúsculas y si es similar a uno existente, devuelve el canonical. Reconoce inicial única si hay un solo match."""
+    t = (texto or "").strip().upper()
+    if not t:
+        return ""
+    if len(t) == 1 and lista_existentes:
+        matches = [n for n in lista_existentes if n and len(n) > 0 and n[0].upper() == t]
+        if len(matches) == 1:
+            return matches[0]
+    for existente in lista_existentes:
+        if existente and (t == existente or (len(t) > 2 and t in existente) or (len(existente) > 2 and existente in t)):
+            return existente
+    try:
+        import difflib
+        for existente in lista_existentes:
+            if existente and difflib.SequenceMatcher(None, t.lower(), existente.lower()).ratio() >= 0.85:
+                return existente
+    except Exception:
+        pass
+    return t
+
+
+def guardar_arqueo_meta(meta):
+    """Guarda metadatos de arqueos."""
+    try:
+        with open(DB_ARQUEO_META, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
+
+def cargar_suministros():
+    """Carga lista de suministros por pagar (luz, agua, etc.) desde JSON."""
+    if not os.path.exists(DB_SUMINISTROS):
+        return ["Luz", "Agua", "Gas", "Internet", "Teléfono", "Seguro", "Calefacción", "Mantenimiento edificio", "Limpieza", "Otros suministros"]
+    try:
+        with open(DB_SUMINISTROS, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("suministros", []) or ["Luz", "Agua", "Gas", "Internet", "Teléfono", "Seguro", "Otros suministros"]
+    except Exception:
+        return ["Luz", "Agua", "Gas", "Internet", "Teléfono", "Seguro", "Otros suministros"]
+
+
+def _gastos_frecuentes_desde_df(df, top_n=20):
+    """Extrae los gastos más frecuentes del historial (por detalle normalizado)."""
+    if df is None or df.empty or "gastos" not in df.columns or "detalle" not in df.columns:
+        return []
+    from collections import Counter
+    gastos_df = df[df["gastos"] > 0].copy()
+    if gastos_df.empty:
+        return []
+    detalles = gastos_df["detalle"].fillna("").astype(str).str.strip()
+    detalles = detalles[detalles.str.len() > 2]
+    detalles_limpios = []
+    for d in detalles:
+        if "(Aprobado por:" in d:
+            d = d.split("(Aprobado por:")[0].strip().rstrip(")")
+        if d and len(d) > 2:
+            detalles_limpios.append(d[:80])
+    cnt = Counter(detalles_limpios)
+    return [nom for nom, _ in cnt.most_common(top_n)]
+
+
+def _nombres_aprobado_desde_df(df, top_n=10):
+    """Extrae nombres de 'Aprobado por: X' del historial de gastos, ordenados por frecuencia."""
+    if df is None or df.empty or "detalle" not in df.columns:
+        return []
+    from collections import Counter
+    import re
+    nombres = []
+    for det in df["detalle"].fillna("").astype(str):
+        m = re.search(r"\(Aprobado por:\s*([^)]+)\)", det, re.IGNORECASE)
+        if m:
+            nom = m.group(1).strip().upper()
+            if nom and len(nom) > 1:
+                nombres.append(nom)
+    cnt = Counter(nombres)
+    return [n for n, _ in cnt.most_common(top_n)]
+
+
 # ============== OCR Y FACTURAS (DETECCIÓN, DUPLICADOS, BÚSQUEDA) ==============
 def _hash_imagen(bytes_imagen):
     """Hash SHA256 del contenido de la imagen para detectar duplicados."""
@@ -1379,8 +1715,10 @@ def _permisos_default():
     return {
         "usuarios": {
             "admin": {"nombre": "Administrador", "permisos": ["*"]},
-            "tesorero": {"nombre": "Tesorero", "permisos": ["ver_inicio", "ver_ministerio_finanzas", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"]},
-            "ministerio_musica": {"nombre": "Ministerio de Música", "permisos": ["ver_inicio", "ver_ministerio_finanzas", "ver_hoja_contable", "ver_informe_pdf"]},
+            "asistente": {"nombre": "Asistente", "permisos": ["ver_inicio", "ver_arqueo_caja"]},
+            "tesorero": {"nombre": "Tesorero", "permisos": ["ver_inicio", "ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"]},
+            "pastor": {"nombre": "Pastor", "permisos": ["ver_inicio", "ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad", "ver_presupuesto_metas", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"]},
+            "ministerio_musica": {"nombre": "Ministerio de Música", "permisos": ["ver_inicio", "ver_arqueo_caja", "ver_hoja_contable", "ver_informe_pdf"]},
         }
     }
 
@@ -1414,10 +1752,25 @@ def cargar_permisos():
             if not isinstance(info.get("permisos"), list):
                 data["usuarios"][uid]["permisos"] = []
                 need_save = True
+    # Migración: ver_ministerio_finanzas -> ver_arqueo_caja, ver_tesoreria, ver_contabilidad
+    for uid, info in list(data.get("usuarios", {}).items()):
+        perms = info.get("permisos", [])
+        if "ver_ministerio_finanzas" in perms and "*" not in perms:
+            perms.remove("ver_ministerio_finanzas")
+            perms.extend(["ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad"])
+            data["usuarios"][uid]["permisos"] = list(set(perms))
+            need_save = True
     # Añadir ministerio_musica si no existe (migración)
-    default_musica = {"nombre": "Ministerio de Música", "permisos": ["ver_inicio", "ver_ministerio_finanzas", "ver_hoja_contable", "ver_informe_pdf"]}
+    default_musica = {"nombre": "Ministerio de Música", "permisos": ["ver_inicio", "ver_arqueo_caja", "ver_hoja_contable", "ver_informe_pdf"]}
     if "ministerio_musica" not in data.get("usuarios", {}):
         data["usuarios"]["ministerio_musica"] = default_musica
+        need_save = True
+    # Añadir asistente y pastor si no existen
+    if "asistente" not in data.get("usuarios", {}):
+        data["usuarios"]["asistente"] = {"nombre": "Asistente", "permisos": ["ver_inicio", "ver_arqueo_caja"]}
+        need_save = True
+    if "pastor" not in data.get("usuarios", {}):
+        data["usuarios"]["pastor"] = {"nombre": "Pastor", "permisos": ["ver_inicio", "ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad", "ver_presupuesto_metas", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"]}
         need_save = True
     if need_save:
         try:
@@ -1716,6 +2069,122 @@ def generar_pdf_hoja_contable(df, lang):
     buf.seek(0)
     return buf
 
+def _formatear_excel_contador(buf):
+    """Ajusta anchos de columna y formato de moneda en el Excel exportado para el contador."""
+    try:
+        from openpyxl import load_workbook
+        from openpyxl.utils import get_column_letter
+        buf.seek(0)
+        wb = load_workbook(buf)
+        ws = wb.active
+        for col_idx, column_cells in enumerate(ws.columns, 1):
+            max_len = max(len(str(cell.value or "")) for cell in column_cells)
+            width = min(max(max_len * 1.15, 10), 50)
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=5, max_col=9):
+            for cell in row:
+                if cell.value is not None and isinstance(cell.value, (int, float)):
+                    cell.number_format = '#,##0.00'
+        buf_out = BytesIO()
+        wb.save(buf_out)
+        buf_out.seek(0)
+        return buf_out.getvalue()
+    except Exception:
+        buf.seek(0)
+        return buf.getvalue()
+
+
+def generar_pdf_hoja_arqueo(datos_arqueo, lang):
+    """Genera PDF compacto de hoja de arqueo para WhatsApp (comprimido, abre en cualquier dispositivo)."""
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4, pageCompression=1)
+    w, h = A4
+    t = TEXTOS.get(lang, TEXTOS["ES"])
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(2*cm, h - 1.2*cm, "HOJA DE ARQUEO - " + (datos_arqueo.get("fecha", "")[:16] or datetime.now().strftime("%Y-%m-%d %H:%M")))
+    c.setFont("Helvetica", 8)
+    c.drawString(2*cm, h - 1.6*cm, t.get("direccion", DIRECCION_IGLESIA)[:60])
+    y = h - 2.2*cm
+    desglose = datos_arqueo.get("desglose", {})
+    if desglose:
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(2*cm, y, "Billetes:")
+        y -= 0.4*cm
+        c.setFont("Helvetica", 8)
+        for denom, key, val in [("$100", "b100", 100), ("$50", "b50", 50), ("$20", "b20", 20), ("$10", "b10", 10), ("$5", "b5", 5)]:
+            cant = desglose.get(key, 0) or 0
+            if cant:
+                c.drawString(2*cm, y, f"  {denom}: {cant} = ${cant * val:.2f}")
+                y -= 0.35*cm
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(2*cm, y, "Monedas:")
+        y -= 0.4*cm
+        c.setFont("Helvetica", 8)
+        for denom, key, val in [("$2", "m2", 2), ("$1", "m1", 1), ("$0.25", "m025", 0.25), ("$0.10", "m010", 0.10), ("$0.05", "m005", 0.05)]:
+            cant = desglose.get(key, 0) or 0
+            if cant:
+                c.drawString(2*cm, y, f"  {denom}: {cant} = ${cant * val:.2f}")
+                y -= 0.35*cm
+    total_efectivo = datos_arqueo.get("total_efectivo", 0) or 0
+    total_cheques = datos_arqueo.get("total_cheques", 0) or 0
+    total_pos = datos_arqueo.get("total_pos", 0) or 0
+    sobres_tot = datos_arqueo.get("sobres_tot", 0) or 0
+    total = datos_arqueo.get("total", 0) or total_efectivo + total_cheques + total_pos + sobres_tot
+    if sobres_tot:
+        y -= 0.3*cm
+        c.setFont("Helvetica", 8)
+        c.drawString(2*cm, y, f"Sobres: {datos_arqueo.get('sobres_cant', 0)} = ${float(sobres_tot):.2f}")
+    if total_cheques:
+        y -= 0.35*cm
+        c.setFont("Helvetica", 8)
+        c.drawString(2*cm, y, f"Cheques: {datos_arqueo.get('cheques_cant', 0)} = ${float(total_cheques):.2f}")
+    y -= 0.3*cm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(2*cm, y, f"TOTAL: ${float(total):.2f}")
+    y -= 0.5*cm
+    c.setFont("Helvetica", 8)
+    contado = datos_arqueo.get("contado_por", "") or "-"
+    verif = datos_arqueo.get("verificado_por", "") or "-"
+    c.drawString(2*cm, y, f"Contado por: {contado[:40]}")
+    y -= 0.35*cm
+    c.drawString(2*cm, y, f"Verificado por: {verif[:40]}")
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def generar_excel_hoja_arqueo(datos_arqueo, lang):
+    """Genera Excel compacto de hoja de arqueo para WhatsApp (comprimido, abre en cualquier dispositivo)."""
+    try:
+        t = TEXTOS.get(lang, TEXTOS["ES"])
+        filas = [["HOJA DE ARQUEO", ""], ["Fecha", datos_arqueo.get("fecha", datetime.now().strftime("%Y-%m-%d %H:%M"))]]
+        desglose = datos_arqueo.get("desglose", {})
+        if desglose:
+            filas.append(["Billetes", ""])
+            for denom, key in [("$100", "b100"), ("$50", "b50"), ("$20", "b20"), ("$10", "b10"), ("$5", "b5")]:
+                filas.append([denom, desglose.get(key, 0)])
+            filas.append(["Monedas", ""])
+            for denom, key in [("$2", "m2"), ("$1", "m1"), ("$0.25", "m025"), ("$0.10", "m010"), ("$0.05", "m005")]:
+                filas.append([denom, desglose.get(key, 0)])
+        if datos_arqueo.get("sobres_cant") or datos_arqueo.get("sobres_tot"):
+            filas.append(["Sobres (cant)", datos_arqueo.get("sobres_cant", 0)])
+            filas.append(["Sobres (total $)", datos_arqueo.get("sobres_tot", 0)])
+        if datos_arqueo.get("cheques_cant") or datos_arqueo.get("total_cheques"):
+            filas.append(["Cheques (cant)", datos_arqueo.get("cheques_cant", 0)])
+            filas.append(["Cheques (total $)", datos_arqueo.get("total_cheques", 0)])
+        total = datos_arqueo.get("total", 0) or 0
+        filas.append(["TOTAL", total])
+        filas.append(["Contado por", datos_arqueo.get("contado_por", "")])
+        filas.append(["Verificado por", datos_arqueo.get("verificado_por", "")])
+        df = pd.DataFrame(filas)
+        buf = BytesIO()
+        df.to_excel(buf, index=False, header=False, engine="openpyxl")
+        buf.seek(0)
+        return buf.getvalue()
+    except Exception:
+        return b""
+
+
 # ============== PÁGINA PRINCIPAL ==============
 def main():
     if "idioma" not in st.session_state:
@@ -1755,7 +2224,7 @@ def main():
         page_title=t["titulo"],
         page_icon="⛪",
         layout="wide",
-        initial_sidebar_state=st.session_state.get("sidebar_state", "expanded")
+        initial_sidebar_state=st.session_state.get("sidebar_state", "collapsed")
     )
 
     # PWA: meta tags para que se pueda "instalar" como app (Netflix/Disney style) y compartir link por WhatsApp
@@ -1844,6 +2313,9 @@ def main():
     .main form [data-testid="stFormSubmitButton"] > button,
     .main [data-testid="stDownloadButton"] > button {{
         width: 100%;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
         font-family: Calibri, 'Segoe UI', sans-serif !important;
         font-size: 1.8rem !important;
         padding: 1rem 2rem !important;
@@ -1854,6 +2326,7 @@ def main():
         border-radius: 12px !important;
         font-weight: bold !important;
         letter-spacing: 0.02em !important;
+        text-align: center !important;
         box-shadow: 0 0 18px rgba(91,155,213,0.25),
                     6px 8px 20px rgba(0,0,0,0.5),
                     3px 4px 12px rgba(0,0,0,0.4),
@@ -2028,7 +2501,7 @@ def main():
         color: {sidebar_txt};
         background: {menu_bg};
         border: 1px solid {sidebar_txt_muted};
-        text-align: left;
+        text-align: center;
         cursor: pointer;
         transition: all 0.25s ease;
         box-shadow: 0 2px 8px rgba(0,0,0,0.2);
@@ -2055,6 +2528,9 @@ def main():
     }}
     section[data-testid="stSidebar"] .stButton > button {{
         width: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
         padding: 1rem 1.2rem !important;
         border-radius: 12px !important;
         font-family: Calibri, 'Segoe UI', sans-serif !important;
@@ -2063,7 +2539,7 @@ def main():
         background: linear-gradient(180deg, rgba(55,65,78,0.9) 0%, rgba(35,42,52,0.9) 50%, rgba(25,30,38,0.9) 100%) !important;
         color: {sidebar_txt} !important;
         border: 1px solid transparent !important;
-        text-align: left !important;
+        text-align: center !important;
         transition: transform 0.2s ease, box-shadow 0.2s ease !important;
         box-shadow: 0 0 12px rgba(91,155,213,0.2),
                     4px 6px 14px rgba(0,0,0,0.45),
@@ -2129,11 +2605,12 @@ def main():
     """, unsafe_allow_html=True)
 
     # ----- MENÚ LATERAL (última generación) -----
-    usuario_actual = st.session_state["usuario_actual"]
+    usuario_actual = st.session_state.get("usuario_actual", "admin")
     data_permisos = cargar_permisos()
-    lista_usuarios = list(data_permisos.get("usuarios", {}).keys())
+    lista_usuarios = list(data_permisos.get("usuarios", {}).keys()) or ["admin"]
 
     with st.sidebar:
+        st.markdown(f"<p class='menu-seccion' style='text-align:center; margin-bottom:0.3rem;'>{t['ministerio_finanzas']}</p>", unsafe_allow_html=True)
         if os.path.exists(LOGO_PRINCIPAL):
             st.image(LOGO_PRINCIPAL, use_container_width=True)
         st.markdown("---")
@@ -2162,7 +2639,7 @@ def main():
                 st.session_state["usuario_actual"] = sel_usuario
                 if sel_usuario != "admin":
                     st.session_state["admin_autorizado"] = False
-                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_state"] = "expanded"
                 st.rerun()
         # PIN de administrador
         if sel_usuario == "admin" and _pin_admin_requerido() and not st.session_state.get("admin_autorizado"):
@@ -2187,26 +2664,46 @@ def main():
         if tiene_permiso(usuario_actual, "ver_inicio"):
             if st.button(f"🏠 {t['inicio']}", key="btn_inicio", use_container_width=True):
                 st.session_state["pagina"] = "inicio"
-                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_state"] = "expanded"
                 st.rerun()
-        if tiene_permiso(usuario_actual, "ver_ministerio_finanzas"):
-            if st.button(f"💰 {t['ministerio_finanzas']}", key="btn_finanzas", use_container_width=True):
-                st.session_state["pagina"] = "ministerio_finanzas"
-                st.session_state["sidebar_state"] = "collapsed"
+        if tiene_permiso(usuario_actual, "ver_arqueo_caja"):
+            if st.button(f"📋 {t['arqueo_caja']}", key="btn_arqueo", use_container_width=True):
+                st.session_state["pagina"] = "arqueo_caja"
+                st.session_state["sidebar_state"] = "expanded"
+                st.rerun()
+        if tiene_permiso(usuario_actual, "ver_tesoreria"):
+            if st.button(f"📒 {t['tesoreria']}", key="btn_tesoreria", use_container_width=True):
+                st.session_state["pagina"] = "tesoreria"
+                st.session_state["sidebar_state"] = "expanded"
+                st.rerun()
+        if tiene_permiso(usuario_actual, "ver_contabilidad"):
+            if st.button(f"📊 {t['contabilidad']}", key="btn_contabilidad", use_container_width=True):
+                st.session_state["pagina"] = "contabilidad"
+                st.session_state["sidebar_state"] = "expanded"
+                st.rerun()
+        if tiene_permiso(usuario_actual, "ver_presupuesto_metas"):
+            if st.button(f"🎯 {t['presupuesto_metas']}", key="btn_presupuesto", use_container_width=True):
+                st.session_state["pagina"] = "presupuesto_metas"
+                st.session_state["sidebar_state"] = "expanded"
                 st.rerun()
         if usuario_actual == "admin":
             if st.button(f"⚙️ {t['administracion']}", key="btn_admin", use_container_width=True):
                 st.session_state["pagina"] = "administracion"
-                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_state"] = "expanded"
                 st.rerun()
         tamano_fuente = st.selectbox(t["tamano_texto"], [t["tamano_normal"], t["tamano_grande"]], key="sel_tamano_fuente", index=0 if st.session_state.get("tamano_fuente") != "grande" else 1)
-        st.session_state["tamano_fuente"] = "grande" if tamano_fuente == t["tamano_grande"] else "normal"
+        nuevo_tamano = "grande" if tamano_fuente == t["tamano_grande"] else "normal"
+        if nuevo_tamano != st.session_state.get("tamano_fuente"):
+            st.session_state["tamano_fuente"] = nuevo_tamano
+            st.session_state["sidebar_state"] = "expanded"
+            st.rerun()
         tema_sel = st.radio("Tema", [t["tema_oscuro"], t["tema_claro"]], key="sel_tema_app", horizontal=True,
                             index=0 if st.session_state.get("tema_app") == "oscuro" else 1,
                             format_func=lambda x: "🌙 " + x if "oscuro" in x.lower() or "dark" in x.lower() else "☀️ " + x)
         nuevo_tema = "claro" if tema_sel == t["tema_claro"] else "oscuro"
         if nuevo_tema != st.session_state.get("tema_app"):
             st.session_state["tema_app"] = nuevo_tema
+            st.session_state["sidebar_state"] = "expanded"
             st.rerun()
         st.markdown("---")
         st.caption(f"{t['version']} {VERSION_APP}")
@@ -2344,10 +2841,15 @@ def main():
                 if not respaldos:
                     st.info(t["sin_respaldos"])
                 else:
-                    sel = st.selectbox(t["seleccionar_respaldo"], options=range(len(respaldos)), format_func=lambda i: respaldos[i][1], key="sel_respaldo")
+                    def _fmt_respaldo(i):
+                        try:
+                            return respaldos[i][1] if i < len(respaldos) and len(respaldos[i]) > 1 else str(i)
+                        except (IndexError, TypeError):
+                            return str(i)
+                    sel = st.selectbox(t["seleccionar_respaldo"], options=range(len(respaldos)), format_func=_fmt_respaldo, key="sel_respaldo")
                     if st.button(t["restaurar"], key="btn_restaurar_respaldo"):
-                        ruta_rest = respaldos[sel][0]
-                        if restaurar_respaldo(ruta_rest):
+                        ruta_rest = respaldos[sel][0] if 0 <= sel < len(respaldos) and respaldos[sel] else None
+                        if ruta_rest and restaurar_respaldo(ruta_rest):
                             audit_log(usuario_actual, "restaurar_respaldo", ruta_rest)
                             st.success(t["restaurado_ok"])
                             st.rerun()
@@ -2487,24 +2989,773 @@ def main():
                 st.session_state["cartel_abierto_inicio"] = None
                 st.rerun()
             st.markdown("---")
-        # Botón Ministerio de Finanzas
-        if st.button(f"💰 {t['ministerio_finanzas']} — {t['sistema_tesoreria']}", key="btn_ir_tesoreria"):
-            st.session_state["pagina"] = "ministerio_finanzas"
-            st.session_state["sidebar_state"] = "collapsed"
-            st.rerun()
+        # Accesos rápidos a las 4 oficinas (según permisos)
+        col_a, col_b, col_c, col_d = st.columns(4)
+        with col_a:
+            if tiene_permiso(usuario_actual, "ver_arqueo_caja") and st.button(f"📋 {t['arqueo_caja']}", key="btn_ir_arqueo", use_container_width=True):
+                st.session_state["pagina"] = "arqueo_caja"
+                st.session_state["sidebar_state"] = "expanded"
+                st.rerun()
+        with col_b:
+            if tiene_permiso(usuario_actual, "ver_tesoreria") and st.button(f"📒 {t['tesoreria']}", key="btn_ir_tesoreria", use_container_width=True):
+                st.session_state["pagina"] = "tesoreria"
+                st.session_state["sidebar_state"] = "expanded"
+                st.rerun()
+        with col_c:
+            if tiene_permiso(usuario_actual, "ver_contabilidad") and st.button(f"📊 {t['contabilidad']}", key="btn_ir_contabilidad", use_container_width=True):
+                st.session_state["pagina"] = "contabilidad"
+                st.session_state["sidebar_state"] = "expanded"
+                st.rerun()
+        with col_d:
+            if tiene_permiso(usuario_actual, "ver_presupuesto_metas") and st.button(f"🎯 {t['presupuesto_metas']}", key="btn_ir_presupuesto", use_container_width=True):
+                st.session_state["pagina"] = "presupuesto_metas"
+                st.session_state["sidebar_state"] = "expanded"
+                st.rerun()
         with st.expander(f"❓ {t['primera_vez']}", expanded=False):
             st.caption(t["ayuda_rapida"])
         with st.expander(f"📲 {t['compartir_app']}", expanded=False):
             st.caption(t["compartir_app_instrucciones"])
         return
 
-    # ----- MINISTERIO DE FINANZAS: SISTEMA DE TESORERÍA -----
-    st.markdown(f"## {t['ministerio_finanzas']}")
-    st.markdown(f"### {t['sistema_tesoreria']}")
-    st.markdown("")
+    # ----- OFICINAS: ARQUEO, TESORERÍA, CONTABILIDAD, PRESUPUESTO -----
+    pagina_act = st.session_state.get("pagina", "inicio")
+    if pagina_act == "ministerio_finanzas":
+        st.session_state["pagina"] = "contabilidad"
+        st.rerun()
+    if pagina_act not in ("arqueo_caja", "tesoreria", "contabilidad", "presupuesto_metas"):
+        st.info(t["bienvenida_texto"])
+        return
 
     with st.spinner(t.get("cargando", "Cargando datos...")):
         df = cargar_db()
+
+    # ---------- ARQUEO DE CAJA (Cierre Diario) ----------
+    if pagina_act == "arqueo_caja":
+        st.markdown(f"## 📋 {t['arqueo_caja']}")
+        st.caption(t["arqueo_caja_sub"])
+        st.markdown("")
+        # Resumen del día
+        hoy_str = datetime.now().strftime("%Y-%m-%d")
+        df_hoy = df[df["fecha"].astype(str).str[:10] == hoy_str] if not df.empty and "fecha" in df.columns else pd.DataFrame()
+        ing_hoy = float(df_hoy["ingreso"].sum()) if not df_hoy.empty else 0.0
+        gas_hoy = float(df_hoy["gastos"].sum()) if not df_hoy.empty else 0.0
+        with st.expander(f"📊 {t['resumen_dia']}", expanded=not df_hoy.empty):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric(t["ingresos_mes"] + " " + hoy_str, f"${ing_hoy:,.2f}")
+            with c2:
+                st.metric(t["gastos_mes"], f"${gas_hoy:,.2f}")
+            with c3:
+                st.metric(t["saldo_actual"], f"${ing_hoy - gas_hoy:,.2f}")
+        st.markdown("")
+        if tiene_permiso(usuario_actual, "ver_ingresar_bendicion"):
+            if st.session_state.get("limpiar_arqueo"):
+                for key in ["b100", "b50", "b20", "b10", "b5", "m2", "m1", "m025", "m010", "m005"]:
+                    st.session_state[key] = 0
+                st.session_state["limpiar_arqueo"] = False
+            with st.expander(f"💰 {t['ingresar_bendicion']}", expanded=True):
+                def _aplica_mayusculas_contado():
+                    v = st.session_state.get("contado_por_arqueo", "")
+                    if v and v != v.upper():
+                        st.session_state["contado_por_arqueo"] = v.upper()
+
+                def _aplica_mayusculas_verificado():
+                    v = st.session_state.get("verificado_por_arqueo", "")
+                    if v and v != v.upper():
+                        st.session_state["verificado_por_arqueo"] = v.upper()
+
+                st.markdown("""<style>
+                .main [data-testid="stTextInput"]:nth-of-type(1) input,
+                .main [data-testid="stTextInput"]:nth-of-type(2) input { text-transform: uppercase !important; }
+                </style>""", unsafe_allow_html=True)
+                meta_arq = cargar_arqueo_meta()
+                nombres_contado, nombres_verificado = _nombres_arqueo_desde_meta(meta_arq)
+                if "contado_por_arqueo" not in st.session_state:
+                    st.session_state["contado_por_arqueo"] = usuario_actual
+                if "verificado_por_arqueo" not in st.session_state:
+                    st.session_state["verificado_por_arqueo"] = ""
+
+                contado_por_raw = st.text_input(t["contado_por"] + " *", key="contado_por_arqueo", max_chars=80, placeholder="Escriba el nombre (se guarda en MAYÚSCULAS)", help=t["contado_por_ayuda"], on_change=_aplica_mayusculas_contado)
+                if nombres_contado:
+                    st.caption(t["arqueo_sugerencias"] + ": ")
+                    cols_c = st.columns(min(6, len(nombres_contado) + 1))[:6]
+                    for i, nom in enumerate(nombres_contado[:5]):
+                        with cols_c[i]:
+                            if st.button(nom, key=f"contado_sug_{i}", use_container_width=True):
+                                st.session_state["contado_por_arqueo"] = nom
+                                st.rerun()
+                contado_por = (contado_por_raw or "").strip().upper()
+                if contado_por and nombres_contado:
+                    contado_por = _normalizar_y_coincidir(contado_por, nombres_contado) or contado_por
+                    if len((contado_por_raw or "").strip()) == 1 and len(contado_por) > 1:
+                        st.session_state["contado_por_arqueo"] = contado_por
+                        st.rerun()
+                ok_contado, msg_contado = _validar_nombre_arqueo(contado_por)
+                if contado_por and not ok_contado:
+                    st.warning(t.get(msg_contado, msg_contado))
+
+                verificado_habilitado = bool(contado_por)
+                verificado_por_raw = st.text_input(t["verificado_por"] + " *", key="verificado_por_arqueo", max_chars=80, placeholder="Escriba el nombre (se guarda en MAYÚSCULAS)", disabled=not verificado_habilitado, help=t["verificado_por_ayuda"], on_change=_aplica_mayusculas_verificado)
+                if verificado_habilitado and nombres_verificado:
+                    st.caption(t["arqueo_sugerencias"] + ": ")
+                    cols_v = st.columns(min(6, len(nombres_verificado) + 1))[:6]
+                    for i, nom in enumerate(nombres_verificado[:5]):
+                        with cols_v[i]:
+                            if st.button(nom, key=f"verificado_sug_{i}", use_container_width=True):
+                                st.session_state["verificado_por_arqueo"] = nom
+                                st.rerun()
+                verificado_por = (verificado_por_raw or "").strip().upper()
+                if verificado_por and nombres_verificado:
+                    verificado_por = _normalizar_y_coincidir(verificado_por, nombres_verificado) or verificado_por
+                    if len((verificado_por_raw or "").strip()) == 1 and len(verificado_por) > 1:
+                        st.session_state["verificado_por_arqueo"] = verificado_por
+                        st.rerun()
+                ok_verif, msg_verif = _validar_nombre_arqueo(verificado_por)
+                if verificado_por and not ok_verif:
+                    st.warning(t.get(msg_verif, msg_verif))
+
+                ambos_ok = bool(contado_por and verificado_por and ok_contado and ok_verif)
+                if not verificado_habilitado:
+                    st.info(t["arqueo_llenar_ambos"] if lang == "ES" else t["arqueo_llenar_ambos"])
+                elif not ambos_ok and (contado_por or verificado_por):
+                    st.warning(t["arqueo_llenar_ambos"])
+                st.markdown("---")
+
+                campos_habilitados = ambos_ok
+                fondo_caja_val = st.number_input(t["fondo_caja"], min_value=0.0, value=0.0, step=10.0, key="fondo_caja_arqueo", disabled=not campos_habilitados)
+                tipo_ingreso_opciones = TIPOS_INGRESO_ES if lang == "ES" else TIPOS_INGRESO_EN
+                tipo_ingreso_sel = st.selectbox(t["tipo_ingreso"], tipo_ingreso_opciones, key="tipo_ingreso_bendicion", disabled=not campos_habilitados)
+                medios_opciones = MEDIOS_PAGO_ES if lang == "ES" else MEDIOS_PAGO_EN
+                medio_efectivo = MEDIO_EFECTIVO_ES if lang == "ES" else MEDIO_EFECTIVO_EN
+                medio_cheques_es = "Cheques"
+                medio_cheques_en = "Checks"
+                medio_pago_sel = st.selectbox(t["medio_pago"], medios_opciones, key="medio_pago_bendicion", disabled=not campos_habilitados)
+                es_efectivo = (medio_pago_sel == medio_efectivo)
+                es_cheques = (medio_pago_sel == medio_cheques_es or medio_pago_sel == medio_cheques_en)
+
+                if es_cheques:
+                    cheques_cant = st.number_input(t["cheques_cantidad"], min_value=0, value=0, step=1, key="cheques_cant_arqueo", disabled=not campos_habilitados)
+                    cheques_tot = st.number_input(t["cheques_total"], min_value=0.0, value=0.0, step=10.0, key="cheques_tot_arqueo", disabled=not campos_habilitados)
+                    st.caption("Marque los cheques como «solo para depósito» antes de guardarlos." if lang == "ES" else "Stamp checks 'for deposit only' before storing.")
+                elif es_efectivo:
+                    ministerio = st.selectbox(t["ministerio"], ministerios, key="min_bendicion", disabled=not campos_habilitados)
+                    st.markdown(f"<p class='big-label'>{t['billetes']}</p>", unsafe_allow_html=True)
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    with col1:
+                        b100 = st.number_input("$100", min_value=0, value=0, step=1, key="b100", disabled=not campos_habilitados)
+                    with col2:
+                        b50 = st.number_input("$50", min_value=0, value=0, step=1, key="b50", disabled=not campos_habilitados)
+                    with col3:
+                        b20 = st.number_input("$20", min_value=0, value=0, step=1, key="b20", disabled=not campos_habilitados)
+                    with col4:
+                        b10 = st.number_input("$10", min_value=0, value=0, step=1, key="b10", disabled=not campos_habilitados)
+                    with col5:
+                        b5 = st.number_input("$5", min_value=0, value=0, step=1, key="b5", disabled=not campos_habilitados)
+                    st.markdown(f"<p class='big-label'>{t['monedas']}</p>", unsafe_allow_html=True)
+                    c1, c2, c3, c4, c5 = st.columns(5)
+                    with c1:
+                        m2 = st.number_input("$2", min_value=0, value=0, step=1, key="m2", disabled=not campos_habilitados)
+                    with c2:
+                        m1 = st.number_input("$1", min_value=0, value=0, step=1, key="m1", disabled=not campos_habilitados)
+                    with c3:
+                        m025 = st.number_input("$0.25", min_value=0, value=0, step=1, key="m025", disabled=not campos_habilitados)
+                    with c4:
+                        m010 = st.number_input("$0.10", min_value=0, value=0, step=1, key="m010", disabled=not campos_habilitados)
+                    with c5:
+                        m005 = st.number_input("$0.05", min_value=0, value=0, step=1, key="m005", disabled=not campos_habilitados)
+                    total_arqueo = (
+                        b100 * 100 + b50 * 50 + b20 * 20 + b10 * 10 + b5 * 5 +
+                        m2 * 2 + m1 * 1 + m025 * 0.25 + m010 * 0.10 + m005 * 0.05
+                    )
+                    if "_last_total_arqueo" not in st.session_state or abs(st.session_state.get("_last_total_arqueo", 0) - total_arqueo) > 0.01:
+                        st.session_state["total_suelto_arqueo"] = round(total_arqueo, 2)
+                        st.session_state["_last_total_arqueo"] = total_arqueo
+                    st.caption(t.get("arqueo_teclado_movil", ""))
+                    st.markdown(f"**{t.get('arqueo_total_calculado', 'Total billetes + monedas')}:** ${total_arqueo:.2f}")
+                    sobres_cant = st.number_input(t["sobres_cantidad"], min_value=0, value=0, step=1, key="sobres_cant_arqueo", disabled=not campos_habilitados)
+                    sobres_tot = st.number_input(t["sobres_total"], min_value=0.0, value=0.0, step=10.0, key="sobres_tot_arqueo", disabled=not campos_habilitados)
+                    total_suelto = st.number_input(t["total_suelto"], min_value=0.0, value=round(total_arqueo, 2), step=10.0, key="total_suelto_arqueo", disabled=not campos_habilitados)
+                    st.caption("Verifique que el contenido de cada sobre coincida con lo escrito." if lang == "ES" else "Verify envelope contents match written amounts.")
+                    st.markdown(f"<div class='total-box'>{t['total']}: ${total_arqueo:.2f}</div>", unsafe_allow_html=True)
+                elif not es_cheques:
+                    monto_no_efectivo = st.number_input(t["monto_pos_tarjeta"], min_value=0.0, value=0.0, step=10.0, key="monto_ingreso_pos", disabled=not campos_habilitados)
+                    ref_opcional = st.text_input(t["referencia_opcional"], key="ref_pos", max_chars=20, placeholder=t.get("referencia_placeholder", ""), disabled=not campos_habilitados)
+
+                _arqueo_keys = (
+                    "contado_por_arqueo", "verificado_por_arqueo", "tipo_ingreso_bendicion", "medio_pago_bendicion",
+                    "min_bendicion", "fondo_caja_arqueo", "cheques_cant_arqueo", "cheques_tot_arqueo",
+                    "b100", "b50", "b20", "b10", "b5", "m2", "m1", "m025", "m010", "m005",
+                    "sobres_cant_arqueo", "sobres_tot_arqueo", "total_suelto_arqueo", "monto_ingreso_pos", "ref_pos",
+                    "_last_total_arqueo", "limpiar_arqueo"
+                )
+                col_reg, col_sp, col_ref = st.columns([1, 2, 1])
+                with col_reg:
+                    if st.button(t["registrar"], key="btn_bendicion", disabled=not ambos_ok):
+                        if es_cheques:
+                            monto_ingreso = round(float(cheques_tot), 2) if cheques_tot else 0.0
+                            if monto_ingreso <= 0:
+                                st.warning(t["arqueo_cero"])
+                            else:
+                                rid = generar_id_arqueo()
+                                fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                detalle = f"Arqueo - Cheques ({cheques_cant} cheques)"
+                                if lang == "ES":
+                                    tipo_guardar_ing = tipo_ingreso_sel
+                                else:
+                                    try:
+                                        idx_ing = TIPOS_INGRESO_EN.index(tipo_ingreso_sel)
+                                        tipo_guardar_ing = TIPOS_INGRESO_ES[idx_ing]
+                                    except (ValueError, IndexError):
+                                        tipo_guardar_ing = DEFAULT_TIPO_INGRESO
+                                nueva = pd.DataFrame([{
+                                    "id_registro": rid,
+                                    "fecha": fecha_ahora,
+                                    "detalle": detalle,
+                                    "tipo_gasto": tipo_guardar_ing,
+                                    "ingreso": monto_ingreso,
+                                    "gastos": 0,
+                                    "total_ingresos": 0,
+                                    "total_gastos": 0,
+                                    "saldo_actual": 0
+                                }])
+                                df = pd.concat([df, nueva], ignore_index=True)
+                                if guardar_db(df, t):
+                                    meta = cargar_arqueo_meta()
+                                    meta[rid] = {
+                                        "contado_por": (contado_por or "").strip() or usuario_actual,
+                                        "verificado_por": (verificado_por or "").strip(),
+                                        "ip_dispositivo": _get_client_ip(),
+                                        "desglose": {},
+                                        "total_cheques": monto_ingreso,
+                                        "cheques_cant": cheques_cant,
+                                        "fecha": fecha_ahora,
+                                    }
+                                    guardar_arqueo_meta(meta)
+                                    audit_log(usuario_actual, "ingreso_registrado", f"{rid} {detalle} ${monto_ingreso:.2f}")
+                                    st.session_state["limpiar_arqueo"] = True
+                                    st.success(t["bendicion_registrada"])
+                                    st.rerun()
+                        elif es_efectivo:
+                            monto_ingreso = round(float(total_suelto or 0) + float(sobres_tot or 0), 2)
+                            if monto_ingreso <= 0:
+                                st.warning(t["arqueo_cero"])
+                            else:
+                                rid = generar_id_arqueo()
+                                fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                detalle = f"Arqueo - {ministerio}"
+                                if lang == "ES":
+                                    tipo_guardar_ing = tipo_ingreso_sel
+                                else:
+                                    try:
+                                        idx_ing = TIPOS_INGRESO_EN.index(tipo_ingreso_sel)
+                                        tipo_guardar_ing = TIPOS_INGRESO_ES[idx_ing]
+                                    except (ValueError, IndexError):
+                                        tipo_guardar_ing = DEFAULT_TIPO_INGRESO
+                                nueva = pd.DataFrame([{
+                                    "id_registro": rid,
+                                    "fecha": fecha_ahora,
+                                    "detalle": detalle,
+                                    "tipo_gasto": tipo_guardar_ing,
+                                    "ingreso": monto_ingreso,
+                                    "gastos": 0,
+                                    "total_ingresos": 0,
+                                    "total_gastos": 0,
+                                    "saldo_actual": 0
+                                }])
+                                df = pd.concat([df, nueva], ignore_index=True)
+                                if guardar_db(df, t):
+                                    meta = cargar_arqueo_meta()
+                                    meta[rid] = {
+                                        "contado_por": (contado_por or "").strip() or usuario_actual,
+                                        "verificado_por": (verificado_por or "").strip(),
+                                        "ip_dispositivo": _get_client_ip(),
+                                        "desglose": {"b100": b100, "b50": b50, "b20": b20, "b10": b10, "b5": b5,
+                                                     "m2": m2, "m1": m1, "m025": m025, "m010": m010, "m005": m005},
+                                        "total_efectivo": float(total_arqueo),
+                                        "total": monto_ingreso,
+                                        "sobres_cant": sobres_cant,
+                                        "sobres_tot": float(sobres_tot or 0),
+                                        "total_suelto": float(total_suelto or 0),
+                                        "fondo_caja": float(fondo_caja_val or 0),
+                                        "fecha": fecha_ahora,
+                                    }
+                                    guardar_arqueo_meta(meta)
+                                    audit_log(usuario_actual, "ingreso_registrado", f"{rid} {detalle} ${monto_ingreso:.2f}")
+                                    st.session_state["limpiar_arqueo"] = True
+                                    st.success(t["bendicion_registrada"])
+                                    st.rerun()
+                        else:
+                            monto_ingreso = round(float(monto_no_efectivo), 2) if monto_no_efectivo else 0.0
+                            if monto_ingreso <= 0:
+                                st.warning(t["arqueo_cero"])
+                            else:
+                                rid = generar_id_arqueo()
+                                fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                if lang == "ES":
+                                    tipo_guardar_ing = tipo_ingreso_sel
+                                else:
+                                    try:
+                                        idx_ing = TIPOS_INGRESO_EN.index(tipo_ingreso_sel)
+                                        tipo_guardar_ing = TIPOS_INGRESO_ES[idx_ing]
+                                    except (ValueError, IndexError):
+                                        tipo_guardar_ing = DEFAULT_TIPO_INGRESO
+                                if medio_pago_sel == (MEDIOS_PAGO_ES[1] if lang == "ES" else MEDIOS_PAGO_EN[1]):
+                                    sufijo = "POS"
+                                elif medio_pago_sel == (MEDIOS_PAGO_ES[2] if lang == "ES" else MEDIOS_PAGO_EN[2]):
+                                    sufijo = "Tarjeta débito" if lang == "ES" else "Debit card"
+                                else:
+                                    sufijo = "Transferencia" if lang == "ES" else "Transfer"
+                                ref = (ref_opcional or "").strip()[:20]
+                                if ref:
+                                    detalle = f"{tipo_guardar_ing} ({sufijo} ****{ref})"
+                                else:
+                                    detalle = f"{tipo_guardar_ing} ({sufijo})"
+                                nueva = pd.DataFrame([{
+                                    "id_registro": rid,
+                                    "fecha": fecha_ahora,
+                                    "detalle": detalle,
+                                    "tipo_gasto": tipo_guardar_ing,
+                                    "ingreso": monto_ingreso,
+                                    "gastos": 0,
+                                    "total_ingresos": 0,
+                                    "total_gastos": 0,
+                                    "saldo_actual": 0
+                                }])
+                                df = pd.concat([df, nueva], ignore_index=True)
+                                if guardar_db(df, t):
+                                    meta = cargar_arqueo_meta()
+                                    meta[rid] = {
+                                        "contado_por": (contado_por or "").strip() or usuario_actual,
+                                        "verificado_por": (verificado_por or "").strip(),
+                                        "ip_dispositivo": _get_client_ip(),
+                                        "total_pos": monto_ingreso,
+                                        "fecha": fecha_ahora,
+                                    }
+                                    guardar_arqueo_meta(meta)
+                                    audit_log(usuario_actual, "ingreso_registrado", f"{rid} {detalle} ${monto_ingreso:.2f}")
+                                    st.session_state["limpiar_arqueo"] = True
+                                    st.success(t["bendicion_registrada"])
+                                    st.rerun()
+                with col_ref:
+                    if st.button(t.get("arqueo_refrescar", "Refrescar"), key="btn_refrescar_arqueo", help=t.get("arqueo_refrescar_ayuda", "")):
+                        for k in _arqueo_keys:
+                            if k in st.session_state:
+                                del st.session_state[k]
+                        st.rerun()
+        with st.expander(f"📋 {t['conciliar']}", expanded=False):
+            st.caption(t["conciliar_ayuda"])
+            fecha_conciliar = st.date_input(t["fecha_conciliar"], value=datetime.now().date(), key="fecha_conciliar_arqueo")
+            fecha_str = fecha_conciliar.strftime("%Y-%m-%d") if fecha_conciliar else datetime.now().strftime("%Y-%m-%d")
+            df_dash = df.copy()
+            try:
+                df_dash["_fecha"] = pd.to_datetime(df_dash["fecha"].astype(str).str[:10], errors="coerce")
+                df_dia = df_dash[df_dash["fecha"].astype(str).str[:10] == fecha_str]
+            except Exception:
+                df_dia = pd.DataFrame()
+            ing_dia = float(df_dia["ingreso"].sum()) if not df_dia.empty else 0.0
+            st.metric(t["ingresos_mes"] + f" ({fecha_str})", f"${ing_dia:,.2f}")
+            lo_contado = st.number_input(t["lo_contado_caja"], min_value=0.0, value=0.0, step=10.0, key="conciliar_contado")
+            if lo_contado > 0:
+                diff = lo_contado - ing_dia
+                if abs(diff) < 0.02:
+                    st.success(t["coincide_registrado"])
+                else:
+                    st.caption(f"Diferencia: ${diff:+,.2f}")
+            meta_conc = cargar_arqueo_meta()
+            fechas_cerradas = meta_conc.get("_fechas_cerradas", []) or []
+            if fecha_str in fechas_cerradas:
+                st.success(f"✓ {t['arqueo_cerrado']} ({fecha_str})")
+            elif st.button(t["cerrar_arqueo"], key="btn_cerrar_arqueo"):
+                fechas_cerradas = list(set(fechas_cerradas + [fecha_str]))
+                meta_conc["_fechas_cerradas"] = fechas_cerradas
+                guardar_arqueo_meta(meta_conc)
+                audit_log(usuario_actual, "arqueo_cerrado", fecha_str)
+                st.success(t["arqueo_cerrado"])
+                st.rerun()
+        with st.expander(f"📤 {t['descargar_hoja_arqueo']}", expanded=False):
+            st.caption(t["descargar_hoja_arqueo_ayuda"])
+            arqueos_ac = df[df["id_registro"].astype(str).str.startswith("AC-")] if not df.empty else pd.DataFrame()
+            if arqueos_ac.empty:
+                st.info(t["sin_movimientos"])
+            else:
+                arqueos_lista = arqueos_ac.iloc[-20:].iloc[::-1]
+                opciones_rid = [str(r.get("id_registro", "")) for _, r in arqueos_lista.iterrows()]
+                rid_a_label = {str(r.get("id_registro", "")): f"{str(r.get('fecha',''))[:16]} — ${float(r.get('ingreso',0)):,.2f}" for _, r in arqueos_lista.iterrows()}
+                if not opciones_rid:
+                    st.info(t["sin_movimientos"])
+                else:
+                    rid_sel = st.selectbox(
+                        t["seleccionar_arqueo"],
+                        options=opciones_rid,
+                        format_func=lambda x: rid_a_label.get(x, str(x)),
+                        key="sel_arqueo_descarga"
+                    )
+                    df_filt = arqueos_ac[arqueos_ac["id_registro"].astype(str) == str(rid_sel or "")] if rid_sel else pd.DataFrame()
+                    if df_filt.empty:
+                        fila_sel = arqueos_lista.iloc[0]
+                    else:
+                        fila_sel = df_filt.iloc[0]
+                    rid_ult = str(fila_sel.get("id_registro", ""))
+                    meta = cargar_arqueo_meta()
+                    datos = meta.get(rid_ult, {})
+                    datos["fecha"] = datos.get("fecha") or str(fila_sel.get("fecha", ""))
+                    datos["total"] = float(fila_sel.get("ingreso", 0))
+                    datos["total_efectivo"] = datos.get("total_efectivo") or datos.get("total", 0)
+                    col_pdf_a, col_xlsx_a = st.columns(2)
+                    with col_pdf_a:
+                        try:
+                            pdf_arq = generar_pdf_hoja_arqueo(datos, lang)
+                            if pdf_arq:
+                                st.download_button(
+                                    label=t["hoja_arqueo_pdf"],
+                                    data=pdf_arq,
+                                    file_name=f"Hoja_Arqueo_{rid_ult.replace(':', '-')[:30]}.pdf",
+                                    mime="application/pdf",
+                                    key="download_hoja_arqueo_pdf"
+                                )
+                        except Exception:
+                            st.caption("PDF no disponible" if lang == "ES" else "PDF not available")
+                    with col_xlsx_a:
+                        try:
+                            xlsx_arq = generar_excel_hoja_arqueo(datos, lang)
+                            if xlsx_arq:
+                                st.download_button(
+                                    label=t["hoja_arqueo_excel"],
+                                    data=xlsx_arq,
+                                    file_name=f"Hoja_Arqueo_{rid_ult.replace(':', '-')[:30]}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key="download_hoja_arqueo_excel"
+                                )
+                        except Exception:
+                            st.caption("Excel no disponible" if lang == "ES" else "Excel not available")
+        return
+
+    # ---------- TESORERÍA (Libro de Registros) ----------
+    if pagina_act == "tesoreria":
+        st.markdown(f"## 📒 {t['tesoreria']}")
+        st.caption(t["tesoreria_sub"])
+        st.markdown("")
+        if tiene_permiso(usuario_actual, "ver_registrar_gasto"):
+            MAX_CARACTERES_DESCRIPCION_T = 1000
+            _gasto_keys = ["desc_g", "monto_g", "aprobado_por_g", "tipo_gasto_sel", "suministro_sel", "gasto_frecuente_sel", "modo_escaneo_rapido"]
+            if st.session_state.get("limpiar_gasto"):
+                for key in ["desc_g", "aprobado_por_g"]:
+                    if key in st.session_state:
+                        st.session_state[key] = ""
+                if "monto_g" in st.session_state:
+                    st.session_state["monto_g"] = 0.0
+                for k in ("monto_sugerido", "descripcion_sugerida", "factura_detectada_actual", "ocr_text_actual", "hash_foto_actual"):
+                    st.session_state.pop(k, None)
+                tipo_opciones = TIPOS_GASTO_ES if st.session_state.get("idioma", "ES") == "ES" else TIPOS_GASTO_EN
+                st.session_state["tipo_gasto_sel"] = tipo_opciones[0]
+                st.session_state["suministro_sel"] = ""
+                st.session_state["gasto_frecuente_sel"] = ""
+                try:
+                    for k in list(st.session_state.keys()):
+                        if k == "foto_gasto" or (isinstance(k, str) and k.startswith("foto_gasto")):
+                            del st.session_state[k]
+                except Exception:
+                    pass
+                st.session_state["limpiar_gasto"] = False
+            modo_rapido = st.checkbox(t.get("modo_escaneo_rapido", "Modo escaneo rápido"), key="modo_escaneo_rapido", value=st.session_state.get("modo_escaneo_rapido", False))
+            with st.expander(f"📤 {t['registrar_gasto']}", expanded=True):
+                tipo_opciones = TIPOS_GASTO_ES if lang == "ES" else TIPOS_GASTO_EN
+                tipo_seleccionado = st.selectbox(t["tipo_gasto"], options=tipo_opciones, key="tipo_gasto_sel")
+                es_recurrentes = tipo_seleccionado in ("Recurrentes", "Recurring")
+                es_operativo = tipo_seleccionado in ("Operativo", "Operational")
+                suministro_sel = ""
+                gasto_frec_sel = ""
+                if es_recurrentes:
+                    suministros_lista = cargar_suministros()
+                    suministro_sel = st.selectbox(t["suministros"], options=[""] + suministros_lista, key="suministro_sel")
+                    if suministro_sel and not st.session_state.get("descripcion_sugerida"):
+                        if "desc_g" not in st.session_state or not st.session_state.get("desc_g"):
+                            st.session_state["desc_g"] = suministro_sel
+                elif es_operativo:
+                    gastos_frec = _gastos_frecuentes_desde_df(df)
+                    opciones_gf = [""] + gastos_frec[:15]
+                    gasto_frec_sel = st.selectbox(t["gastos_frecuentes"], options=opciones_gf, key="gasto_frecuente_sel")
+                    if gasto_frec_sel and not st.session_state.get("descripcion_sugerida"):
+                        if "desc_g" not in st.session_state or not st.session_state.get("desc_g"):
+                            st.session_state["desc_g"] = gasto_frec_sel
+                with st.form("form_gasto", clear_on_submit=True):
+                    monto_sugerido = st.session_state.get("monto_sugerido", "")
+                    try:
+                        monto_val_inicial = float(str(monto_sugerido).replace(",", ".")) if monto_sugerido else 0.0
+                    except (ValueError, TypeError):
+                        monto_val_inicial = 0.0
+                    st.number_input(t["monto"], min_value=0.0, value=monto_val_inicial, step=0.01, format="%.2f", key="monto_g", help=t.get("gasto_teclado_movil", ""))
+                    col_btn_reg, col_btn_sp, col_btn_ref = st.columns([1, 2, 1])
+                    with col_btn_reg:
+                        enviado = st.form_submit_button(t["registrar"])
+                col_btn_reg, col_btn_sp, col_btn_ref = st.columns([1, 2, 1])
+                with col_btn_ref:
+                    if st.button(t.get("gasto_refrescar", "Refrescar"), key="btn_refrescar_gasto", help=t.get("gasto_refrescar_ayuda", ""), use_container_width=True):
+                        st.session_state["limpiar_gasto"] = True
+                        st.rerun()
+                if not modo_rapido:
+                    desc_sugerida = st.session_state.get("descripcion_sugerida", "")
+                    desc_base = desc_sugerida or (suministro_sel if es_recurrentes else (gasto_frec_sel if es_operativo else ""))
+                    desc_gasto = st.text_input(t["descripcion"], value=st.session_state.get("desc_g", desc_base) or desc_base, max_chars=MAX_CARACTERES_DESCRIPCION_T, key="desc_g")
+                    n_car = len(desc_gasto or "")
+                    st.markdown(
+                        f"<p style='font-size:0.75rem; color: {sidebar_txt_muted}; margin-top: -0.5rem;'>{n_car} / {MAX_CARACTERES_DESCRIPCION_T} {t['caracteres']}</p>",
+                        unsafe_allow_html=True
+                    )
+                    nombres_aprobado = _nombres_aprobado_desde_df(df)
+                    def _aplica_mayusculas_aprobado():
+                        v = st.session_state.get("aprobado_por_g", "")
+                        if v and v != v.upper():
+                            st.session_state["aprobado_por_g"] = v.upper()
+                    aprobado_por_raw = st.text_input(t["aprobado_por"] + f" {UMBRAL_GASTO_APROBACION:.0f})", key="aprobado_por_g", max_chars=100, placeholder="Nombre de quien aprueba", on_change=_aplica_mayusculas_aprobado)
+                    if nombres_aprobado:
+                        st.caption(t.get("gasto_sugerencias", "Sugerencias") + ": ")
+                        cols_ap = st.columns(min(6, len(nombres_aprobado) + 1))[:6]
+                        for i, nom in enumerate(nombres_aprobado[:5]):
+                            with cols_ap[i]:
+                                if st.button(nom, key=f"aprobado_sug_{i}", use_container_width=True):
+                                    st.session_state["aprobado_por_g"] = nom
+                                    st.rerun()
+                    aprobado_por_gasto = (aprobado_por_raw or "").strip().upper()
+                    if aprobado_por_gasto and nombres_aprobado:
+                        aprobado_por_gasto = _normalizar_y_coincidir(aprobado_por_gasto, nombres_aprobado) or aprobado_por_gasto
+                    ok_aprob, msg_aprob = _validar_nombre_arqueo(aprobado_por_gasto)
+                    if aprobado_por_gasto and not ok_aprob:
+                        st.warning(t.get(msg_aprob, msg_aprob))
+                else:
+                    desc_gasto = st.session_state.get("desc_g", "") or "Gasto (modo rápido)"
+                    aprobado_por_gasto = ""
+                    ok_aprob = True
+                st.markdown(f"<p class='big-label'>{t['tomar_foto']}</p>", unsafe_allow_html=True)
+                st.caption(t.get("foto_multiples_ayuda", "Puede subir varias fotos (frente, reverso, anexos)."))
+                foto_subidas = st.file_uploader(" ", type=["jpg", "jpeg", "png"], key="foto_gasto", accept_multiple_files=True)
+                foto_subida = foto_subidas[0] if foto_subidas else None
+
+                if foto_subida:
+                    bytes_foto = foto_subida.getvalue()
+                    hash_foto = _hash_imagen(bytes_foto)
+                    if imagen_ya_subida(hash_foto):
+                        st.warning(t["imagen_ya_subida_aviso"])
+                    if st.session_state.get("hash_foto_actual") != hash_foto:
+                        ocr_text = _ocr_imagen(bytes_foto)
+                        datos = _extraer_datos_factura(ocr_text)
+                        st.session_state["factura_detectada_actual"] = datos
+                        st.session_state["ocr_text_actual"] = ocr_text
+                        st.session_state["hash_foto_actual"] = hash_foto
+                        st.session_state["monto_sugerido"] = f"{datos['total']:.2f}" if datos.get("total") is not None else ""
+                        st.session_state["descripcion_sugerida"] = (datos.get("comercio") or "")[:MAX_CARACTERES_DESCRIPCION_T]
+                        st.rerun()
+                    datos_show = st.session_state.get("factura_detectada_actual") or {}
+                    tiene_datos_ocr = datos_show and (datos_show.get("total") is not None or datos_show.get("comercio"))
+                    with st.expander(f"📋 {t['factura_detectada']}", expanded=True):
+                        if st.button(t.get("reintentar_ocr", "Reintentar OCR"), key="btn_reintentar_ocr"):
+                            ocr_text = _ocr_imagen(bytes_foto)
+                            datos = _extraer_datos_factura(ocr_text)
+                            st.session_state["factura_detectada_actual"] = datos
+                            st.session_state["ocr_text_actual"] = ocr_text
+                            st.session_state["monto_sugerido"] = f"{datos['total']:.2f}" if datos.get("total") is not None else ""
+                            st.session_state["descripcion_sugerida"] = (datos.get("comercio") or "")[:MAX_CARACTERES_DESCRIPCION_T]
+                            st.rerun()
+                        st.markdown(f"**{t.get('vista_previa_factura', 'Vista previa')}:**")
+                        for idx_f, fup in enumerate(foto_subidas):
+                            lbl = (t.get("foto_frente", "Frente"), t.get("foto_reverso", "Reverso"), t.get("foto_anexo", "Anexo"))[min(idx_f, 2)] if idx_f < 3 else f"#{idx_f + 1}"
+                            st.caption(lbl if len(foto_subidas) > 1 else "")
+                            st.image(fup.getvalue(), use_column_width=True)
+                        if datos_show.get("total") is not None:
+                            st.markdown(f"**{t['total_detectado']}:** ${datos_show['total']:.2f}")
+                        if datos_show.get("impuesto") is not None:
+                            st.markdown(f"**{t['impuesto_detectado']}:** ${datos_show['impuesto']:.2f}")
+                        if datos_show.get("comercio"):
+                            st.markdown(f"**{t['comercio_detectado']}:** {datos_show['comercio'][:100]}")
+                        monto_manual = 0.0
+                        try:
+                            mg = st.session_state.get("monto_g")
+                            if mg is not None:
+                                monto_manual = round(float(mg), 2) if isinstance(mg, (int, float)) else round(float((str(mg) or "").strip().replace(",", ".") or 0), 2)
+                        except (ValueError, TypeError):
+                            pass
+                        if datos_show.get("total") is not None and monto_manual > 0 and abs(monto_manual - datos_show["total"]) > 0.01:
+                            st.warning(t.get("ocr_diferencia_aviso", "").format(manual=monto_manual, ocr=datos_show["total"]))
+                        if not tiene_datos_ocr:
+                            st.info(t.get("ocr_sin_datos", "No se detectó información. Use «Reintentar OCR» o ingrese los datos manualmente."))
+
+                if enviado:
+                    rid = generar_id_gasto()
+                    monto_raw = st.session_state.get("monto_g")
+                    try:
+                        monto_final = round(float(monto_raw), 2) if monto_raw is not None else 0.0
+                    except (ValueError, TypeError):
+                        try:
+                            monto_parse = (str(monto_raw or "") or "").strip().replace(",", ".")
+                            monto_final = round(float(monto_parse) if monto_parse else 0.0, 2)
+                        except (ValueError, TypeError):
+                            monto_final = 0.0
+                    if monto_final < 0:
+                        monto_final = 0.0
+                    monto_final = round(float(monto_final), 2)
+                    if monto_final <= 0:
+                        st.warning(t["gasto_cero"])
+                    elif monto_final >= UMBRAL_GASTO_APROBACION and (not aprobado_por_gasto or not ok_aprob):
+                        st.warning(t.get("gasto_aprobado_requerido", "Gastos ≥ $500 requieren nombre válido en Aprobado por.") if lang == "ES" else t.get("gasto_aprobado_requerido", "Expenses ≥ $500 require valid name in Approved by."))
+                    else:
+                        foto_ruta = ""
+                        fotos_guardadas = []
+                        if foto_subidas:
+                            carpeta_fotos = "fotos_gastos"
+                            os.makedirs(carpeta_fotos, exist_ok=True)
+                            for idx, fup in enumerate(foto_subidas):
+                                bytes_orig = fup.getvalue()
+                                bytes_guardar = _comprimir_imagen(bytes_orig)
+                                base_name = os.path.splitext(os.path.basename(getattr(fup, "name", "foto")))[0].replace("\\", "_").replace("/", "_")[:60]
+                                nombre_foto = f"{rid}_{idx}_{base_name}.jpg" if idx > 0 else f"{rid}_{base_name}.jpg"
+                                ruta = os.path.join(carpeta_fotos, nombre_foto)
+                                try:
+                                    with open(ruta, "wb") as f:
+                                        f.write(bytes_guardar)
+                                    if idx == 0:
+                                        foto_ruta = ruta
+                                    fotos_guardadas.append(ruta)
+                                except Exception as e:
+                                    st.warning(t["gasto_foto_no"].format(e=str(e)))
+                        fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        detalle_gasto = (desc_gasto or "Gasto")[:MAX_CARACTERES_DESCRIPCION_T]
+                        if monto_final >= UMBRAL_GASTO_APROBACION and (aprobado_por_gasto or "").strip():
+                            detalle_gasto = (detalle_gasto + " (Aprobado por: " + (aprobado_por_gasto or "").strip()[:80] + ")")[:MAX_CARACTERES_DESCRIPCION_T]
+                        if lang == "ES":
+                            tipo_guardar = tipo_seleccionado
+                        else:
+                            try:
+                                idx = TIPOS_GASTO_EN.index(tipo_seleccionado)
+                                tipo_guardar = TIPOS_GASTO_ES[idx]
+                            except (ValueError, IndexError):
+                                tipo_guardar = DEFAULT_TIPO_GASTO
+                        nueva = pd.DataFrame([{
+                            "id_registro": rid,
+                            "fecha": fecha_ahora,
+                            "detalle": detalle_gasto,
+                            "tipo_gasto": tipo_guardar,
+                            "ingreso": 0,
+                            "gastos": monto_final,
+                            "total_ingresos": 0,
+                            "total_gastos": 0,
+                            "saldo_actual": 0
+                        }])
+                        df = pd.concat([df, nueva], ignore_index=True)
+                        if guardar_db(df, t):
+                            meta_g = cargar_arqueo_meta()
+                            if rid not in meta_g:
+                                meta_g[rid] = {}
+                            meta_g[rid]["ip_dispositivo"] = _get_client_ip()
+                            meta_g[rid]["fecha"] = fecha_ahora
+                            if len(fotos_guardadas) > 1:
+                                meta_g[rid]["fotos_adicionales"] = fotos_guardadas[1:]
+                            guardar_arqueo_meta(meta_g)
+                            audit_log(usuario_actual, "gasto_registrado", f"{rid} ${monto_final:.2f} {detalle_gasto[:50]}")
+                            if foto_subidas:
+                                bytes_foto = foto_subidas[0].getvalue()
+                                hash_foto = _hash_imagen(bytes_foto)
+                                ocr_text = _ocr_imagen(bytes_foto)
+                                datos_f = _extraer_datos_factura(ocr_text)
+                                guardar_factura({
+                                    "id_registro": rid,
+                                    "hash_imagen": hash_foto,
+                                    "ocr_text": ocr_text,
+                                    "total": monto_final,
+                                    "impuesto": datos_f.get("impuesto"),
+                                    "subtotal": datos_f.get("subtotal"),
+                                    "comercio": detalle_gasto,
+                                    "tipo_gasto": tipo_guardar,
+                                    "items": datos_f.get("items", []),
+                                    "fecha_factura": datos_f.get("fecha_texto", ""),
+                                    "fecha_registro": fecha_ahora,
+                                })
+                            for key in ("monto_sugerido", "descripcion_sugerida", "factura_detectada_actual", "ocr_text_actual", "hash_foto_actual"):
+                                st.session_state.pop(key, None)
+                            st.session_state["limpiar_gasto"] = True
+                            st.success(f"{t['gasto_registrado']} ${monto_final:.2f}")
+                            st.rerun()
+            with st.expander(f"📥 {t.get('importar_gastos', 'Importar gastos')}", expanded=False):
+                st.caption(t.get("importar_gastos_ayuda", ""))
+                archivo_import = st.file_uploader(" ", type=["csv", "xlsx", "xls"], key="import_gastos_file")
+                if archivo_import:
+                    try:
+                        if archivo_import.name.lower().endswith(".csv"):
+                            df_imp = pd.read_csv(archivo_import, encoding="utf-8-sig")
+                        else:
+                            df_imp = pd.read_excel(archivo_import)
+                        cols_necesarias = ["fecha", "detalle", "gastos"]
+                        if not all(c in df_imp.columns for c in cols_necesarias):
+                            st.warning("El archivo debe tener columnas: fecha, detalle, gastos (y opcional: tipo_gasto)")
+                        else:
+                            tipo_col = "tipo_gasto" if "tipo_gasto" in df_imp.columns else None
+                            importados = 0
+                            for _, row in df_imp.iterrows():
+                                try:
+                                    fecha_val = str(row.get("fecha", ""))[:19]
+                                    det = str(row.get("detalle", "Gasto"))[:MAX_CARACTERES_DESCRIPCION_T]
+                                    gas = float(row.get("gastos", 0) or 0)
+                                    if gas <= 0:
+                                        continue
+                                    tipo_imp = str(row.get(tipo_col, DEFAULT_TIPO_GASTO))[:50] if tipo_col else DEFAULT_TIPO_GASTO
+                                    rid = generar_id_gasto()
+                                    nueva = pd.DataFrame([{"id_registro": rid, "fecha": fecha_val, "detalle": det, "tipo_gasto": tipo_imp, "ingreso": 0, "gastos": gas, "total_ingresos": 0, "total_gastos": 0, "saldo_actual": 0}])
+                                    df = pd.concat([df, nueva], ignore_index=True)
+                                    importados += 1
+                                except Exception:
+                                    continue
+                            if importados > 0 and guardar_db(df, t):
+                                df = _recalcular_totales_ledger(df)
+                                guardar_db(df, t)
+                                audit_log(usuario_actual, "gastos_importados", f"{importados} registros")
+                                st.success(f"Importados {importados} gastos correctamente.")
+                                st.rerun()
+                            elif importados == 0:
+                                st.info("No se encontraron filas válidas para importar.")
+                    except Exception as ex:
+                        st.error(f"Error al importar: {ex}")
+            with st.expander(f"🔔 {t.get('recordatorios_recurrentes', 'Recordatorios')}", expanded=False):
+                suministros_pend = cargar_suministros()
+                mes_actual = datetime.now().strftime("%Y-%m")
+                if not df.empty:
+                    try:
+                        df_r = df.copy()
+                        df_r["_fecha"] = pd.to_datetime(df_r["fecha"].astype(str).str[:10], errors="coerce")
+                        df_r["_mes"] = df_r["_fecha"].dt.strftime("%Y-%m")
+                        df_mes = df_r[df_r["_mes"] == mes_actual]
+                        detalle_mes = set((df_mes["detalle"].fillna("").astype(str).str[:50]).str.upper())
+                        pendientes = [s for s in suministros_pend if s.upper()[:30] not in " ".join(detalle_mes)[:500]]
+                        if pendientes:
+                            st.caption(t.get("recordatorios_pendientes", "Suministros que podrían estar pendientes este mes:"))
+                            for p in pendientes[:10]:
+                                st.markdown(f"- {p}")
+                        else:
+                            st.info(t.get("recordatorios_todos_ok", "Todos los suministros habituales parecen registrados este mes."))
+                    except Exception:
+                        st.caption("No se pudo calcular." if lang == "ES" else "Could not calculate.")
+                else:
+                    st.caption(t.get("recordatorios_registre", "Registre gastos para ver recordatorios."))
+            st.markdown("""<style>
+            .main [data-testid="stExpander"] div[data-testid="stVerticalBlock"] .stButton > button,
+            .main [data-testid="stExpander"] [data-testid="stFormSubmitButton"] > button,
+            .main .block-container [data-testid="stExpander"] .stButton > button { min-height: 3.2rem !important; padding: 0.9rem 1.6rem !important; font-size: 1.15rem !important; }
+            @media (max-width: 768px) {
+            .main .stButton > button, .main [data-testid="stFormSubmitButton"] > button { min-height: 3.5rem !important; padding: 1rem 1.8rem !important; font-size: 1.2rem !important; }
+            }
+            </style>""", unsafe_allow_html=True)
+        return
+
+    # ---------- PRESUPUESTO Y METAS (Visión) ----------
+    if pagina_act == "presupuesto_metas":
+        st.markdown(f"## 🎯 {t['presupuesto_metas']}")
+        st.caption(t["presupuesto_metas_sub"])
+        st.markdown("")
+        st.info("Espacio de planeación: metas de recaudación, presupuestos por proyecto. (En desarrollo)" if lang == "ES" else "Planning space: fundraising goals, project budgets. (In development)")
+        return
+
+    # ---------- CONTABILIDAD (Bóveda Histórica) ----------
+    st.markdown(f"## 📊 {t['contabilidad']}")
+    st.caption(t["contabilidad_sub"])
+    st.markdown("")
     if not df.empty:
         ok_int, msg_int = verificar_integridad_ledger(df)
         if not ok_int:
@@ -2532,22 +3783,144 @@ def main():
             st.metric(t["ingresos_mes"], f"${ing_mes:,.2f}")
         with c3:
             st.metric(t["gastos_mes"], f"${gas_mes:,.2f}")
-        # Gráfico: ingresos vs gastos por mes (últimos 6 meses)
+        # Gráfico trazabilidad: saldo en el tiempo (línea continua, verde=alza, rojo=baja) — estilo bolsa
         try:
-            df_dash["_fecha"] = pd.to_datetime(df_dash["fecha"].astype(str).str[:10], errors="coerce")
-            df_dash["_mes"] = df_dash["_fecha"].dt.to_period("M").astype(str)
-            ultimos_meses = sorted(df_dash["_mes"].dropna().unique())[-6:]
-            chart_data = []
-            for m in ultimos_meses:
-                sub = df_dash[df_dash["_mes"] == m]
-                chart_data.append({
-                    "mes": m,
-                    "Ingresos": float(sub["ingreso"].sum()),
-                    "Gastos": float(sub["gastos"].sum()),
-                })
-            if chart_data:
-                df_chart = pd.DataFrame(chart_data).set_index("mes")
-                st.bar_chart(df_chart, use_container_width=True)
+            df_dash = df_dash.copy()
+            df_dash["_fecha"] = pd.to_datetime(df_dash["fecha"].astype(str), errors="coerce")
+            df_dash = df_dash.dropna(subset=["_fecha"]).sort_values("_fecha").reset_index(drop=True)
+            if not df_dash.empty and "saldo_actual" in df_dash.columns and _PLOTLY_DISPONIBLE:
+                saldos = pd.to_numeric(df_dash["saldo_actual"], errors="coerce").fillna(0).tolist()
+                fechas = df_dash["_fecha"].tolist()
+                tema_oscuro = st.session_state.get("tema_app", "oscuro") == "oscuro"
+                # Estilo bolsa: fondo azul oscuro, rejilla neon, porcentajes celeste/turquesa
+                if tema_oscuro:
+                    paper_bg = "rgba(5,15,35,0.98)"
+                    plot_bg = "rgba(8,25,55,0.95)"
+                    grid_color = "rgba(0,200,255,0.4)"
+                    grid_color_sec = "rgba(0,180,230,0.25)"
+                    font_color = "rgba(150,220,255,0.95)"
+                    pct_color = "rgba(100,210,255,0.9)"
+                else:
+                    paper_bg = "rgba(240,248,255,0.98)"
+                    plot_bg = "rgba(230,245,255,0.95)"
+                    grid_color = "rgba(0,150,200,0.35)"
+                    grid_color_sec = "rgba(0,120,180,0.2)"
+                    font_color = "#1a365d"
+                    pct_color = "rgba(0,120,180,0.9)"
+                # Porcentaje de variación (referencia: saldo inicial)
+                ref = saldos[0] if saldos else 0
+                pct_inicial = 0.0
+                pct_final = ((saldos[-1] - ref) / abs(ref) * 100) if ref != 0 else 0.0
+                pct_max = ((max(saldos) - ref) / abs(ref) * 100) if ref != 0 else 0.0
+                pct_min = ((min(saldos) - ref) / abs(ref) * 100) if ref != 0 else 0.0
+                # Segmentos: verde=alza, rojo=baja (línea continua)
+                fig = go.Figure()
+                if len(saldos) == 1:
+                    fig.add_trace(go.Scatter(
+                        x=fechas, y=saldos, mode="markers",
+                        marker=dict(size=14, color="#00d4ff", line=dict(width=2, color="#00a8cc"), symbol="diamond"),
+                        name=t["grafico_saldo"],
+                    ))
+                else:
+                    for i in range(len(saldos) - 1):
+                        color_seg = "#00e676" if saldos[i + 1] >= saldos[i] else "#ff5252"
+                        fig.add_trace(go.Scatter(
+                            x=[fechas[i], fechas[i + 1]], y=[saldos[i], saldos[i + 1]],
+                            mode="lines",
+                            line=dict(color=color_seg, width=3.5),
+                            showlegend=False,
+                            hovertemplate="%{x|%Y-%m-%d %H:%M:%S}<br>$%{y:,.2f}<extra></extra>",
+                        ))
+                    cmin, cmax = min(saldos), max(saldos)
+                    if cmin == cmax:
+                        cmin, cmax = cmin - 1, cmax + 1
+                    fig.add_trace(go.Scatter(
+                        x=fechas, y=saldos, mode="markers",
+                        marker=dict(size=7, color=saldos, colorscale=[[0, "#ff5252"], [0.5, "#00d4ff"], [1, "#00e676"]],
+                                    cmin=cmin, cmax=cmax, showscale=False, line=dict(width=1.5, color="rgba(255,255,255,0.7)")),
+                        name=t["grafico_saldo"],
+                        hovertemplate="%{x|%Y-%m-%d %H:%M:%S}<br>$%{y:,.2f}<extra></extra>",
+                    ))
+                # Anotaciones de porcentaje (celeste/turquesa, significado claro)
+                annotations = []
+                if len(saldos) > 1:
+                    annotations.append(dict(x=fechas[0], y=saldos[0], text=f"{pct_inicial:+.1f}%", showarrow=False,
+                                           xanchor="right", font=dict(size=12, color=pct_color, family="Calibri"),
+                                           bgcolor="rgba(0,0,0,0.3)", borderpad=4))
+                    annotations.append(dict(x=fechas[-1], y=saldos[-1], text=f"{pct_final:+.1f}%", showarrow=False,
+                                           xanchor="left", font=dict(size=12, color=pct_color, family="Calibri"),
+                                           bgcolor="rgba(0,0,0,0.3)", borderpad=4))
+                    if len(saldos) > 2 and (pct_max != pct_final or pct_min != pct_final):
+                        idx_max = saldos.index(max(saldos))
+                        idx_min = saldos.index(min(saldos))
+                        if idx_max not in (0, len(saldos) - 1):
+                            annotations.append(dict(x=fechas[idx_max], y=saldos[idx_max], text=f"{pct_max:+.1f}%", showarrow=False,
+                                                   font=dict(size=11, color=pct_color), bgcolor="rgba(0,0,0,0.25)", borderpad=3))
+                        if idx_min not in (0, len(saldos) - 1) and idx_min != idx_max:
+                            annotations.append(dict(x=fechas[idx_min], y=saldos[idx_min], text=f"{pct_min:+.1f}%", showarrow=False,
+                                                   font=dict(size=11, color=pct_color), bgcolor="rgba(0,0,0,0.25)", borderpad=3))
+                fig.update_layout(
+                    title=dict(text=f"📈 {t['grafico_trazabilidad']} — {t['grafico_var']} %", font=dict(size=18, color=font_color)),
+                    paper_bgcolor=paper_bg,
+                    plot_bgcolor=plot_bg,
+                    font=dict(family="Calibri, 'Segoe UI', sans-serif", color=font_color, size=12),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5, bgcolor="rgba(0,0,0,0)", font=dict(size=11, color=font_color)),
+                    margin=dict(t=80, b=80, l=70, r=50),
+                    hovermode="x unified",
+                    annotations=annotations,
+                    xaxis=dict(
+                        showgrid=True, gridcolor=grid_color, gridwidth=1.5, zeroline=True, zerolinecolor=grid_color_sec,
+                        tickfont=dict(size=11, color=font_color), tickformat="%d/%m %H:%M",
+                        rangeslider=dict(visible=True, bgcolor="rgba(0,100,150,0.2)", bordercolor=grid_color, thickness=0.05),
+                        type="date",
+                    ),
+                    yaxis=dict(
+                        title=dict(text="$", font=dict(color=font_color)),
+                        showgrid=True, gridcolor=grid_color, gridwidth=1.5, zeroline=True, zerolinecolor=grid_color_sec,
+                        tickfont=dict(size=11, color=font_color), tickformat="$,.0f",
+                        dtick=None,
+                    ),
+                )
+                fig.update_xaxes(showgrid=True, gridwidth=1.5, gridcolor=grid_color, zerolinewidth=1)
+                fig.update_yaxes(showgrid=True, gridwidth=1.5, gridcolor=grid_color, zerolinewidth=1)
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True, "displaylogo": False, "scrollZoom": True})
+                st.caption(f"🟢 {t['grafico_alza']}  ·  🔴 {t['grafico_baja']} — {t['grafico_trazabilidad']}")
+                # Cuadro Ingresos & Gastos: solo visible con contraseña universal + clic
+                es_maestro = st.session_state.get("es_acceso_maestro") and usuario_actual == "admin"
+                if es_maestro:
+                    ver_ing_gas = st.checkbox(f"📊 {t['grafico_ver_ingresos_gastos']}", key="maestro_ver_grafico_ingresos_gastos", value=False)
+                    if ver_ing_gas:
+                        df_dash["_mes"] = df_dash["_fecha"].dt.to_period("M").astype(str)
+                        ultimos_meses = sorted(df_dash["_mes"].dropna().unique())[-6:]
+                        chart_data = []
+                        for m in ultimos_meses:
+                            sub = df_dash[df_dash["_mes"] == m]
+                            chart_data.append({"mes": m, "Ingresos": float(sub["ingreso"].sum()), "Gastos": float(sub["gastos"].sum())})
+                        if chart_data:
+                            df_chart = pd.DataFrame(chart_data)
+                            fig2 = go.Figure()
+                            fig2.add_trace(go.Bar(name=t["ingresos_mes"], x=df_chart["mes"], y=df_chart["Ingresos"],
+                                                  marker_color="rgba(0,230,118,0.65)", marker_line_color="rgba(0,200,100,0.5)", marker_line_width=0.5, width=0.25))
+                            fig2.add_trace(go.Bar(name=t["gastos_mes"], x=df_chart["mes"], y=df_chart["Gastos"],
+                                                  marker_color="rgba(255,82,82,0.65)", marker_line_color="rgba(220,50,50,0.5)", marker_line_width=0.5, width=0.25))
+                            fig2.update_layout(barmode="group", bargap=0.5, bargroupgap=0.15,
+                                              title=dict(text=f"📊 {t['grafico_ingresos_gastos']}", font=dict(size=14, color=font_color)),
+                                              paper_bgcolor=paper_bg, plot_bgcolor=plot_bg, font=dict(color=font_color),
+                                              margin=dict(t=50, b=40), xaxis=dict(gridcolor=grid_color, gridwidth=1.5),
+                                              yaxis=dict(gridcolor=grid_color, gridwidth=1.5, tickformat="$,.0f"))
+                            st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+            else:
+                es_maestro_else = st.session_state.get("es_acceso_maestro") and usuario_actual == "admin"
+                if es_maestro_else:
+                    ver_ing_gas_else = st.checkbox(f"📊 {t['grafico_ver_ingresos_gastos']}", key="maestro_ver_grafico_ingresos_gastos", value=False)
+                    if ver_ing_gas_else:
+                        df_dash["_fecha"] = pd.to_datetime(df_dash["fecha"].astype(str).str[:10], errors="coerce")
+                        df_dash["_mes"] = df_dash["_fecha"].dt.to_period("M").astype(str)
+                        ultimos_meses = sorted(df_dash["_mes"].dropna().unique())[-6:]
+                        chart_data = [{"mes": m, "Ingresos": float(df_dash[df_dash["_mes"] == m]["ingreso"].sum()), "Gastos": float(df_dash[df_dash["_mes"] == m]["gastos"].sum())} for m in ultimos_meses]
+                        if chart_data:
+                            df_chart = pd.DataFrame(chart_data).set_index("mes")
+                            st.bar_chart(df_chart[["Ingresos", "Gastos"]], use_container_width=True)
         except Exception:
             pass
         with st.expander(f"📋 {t['conciliar']}", expanded=False):
@@ -2561,270 +3934,6 @@ def main():
                 else:
                     st.caption(f"Diferencia: ${diff:+,.2f}")
         st.markdown("---")
-
-    # ---------- INGRESAR BENDICIÓN ----------
-    if tiene_permiso(usuario_actual, "ver_ingresar_bendicion"):
-        # Limpiar campos a 0 antes de crear los widgets (Streamlit no permite modificar session_state del key después de instanciar el widget)
-        if st.session_state.get("limpiar_arqueo"):
-            for key in ["b100", "b50", "b20", "b10", "b5", "m2", "m1", "m025", "m010", "m005"]:
-                st.session_state[key] = 0
-            st.session_state["limpiar_arqueo"] = False
-        with st.expander(f"💰 {t['ingresar_bendicion']}", expanded=True):
-            tipo_ingreso_opciones = TIPOS_INGRESO_ES if lang == "ES" else TIPOS_INGRESO_EN
-            tipo_ingreso_sel = st.selectbox(t["tipo_ingreso"], tipo_ingreso_opciones, key="tipo_ingreso_bendicion")
-            medios_opciones = MEDIOS_PAGO_ES if lang == "ES" else MEDIOS_PAGO_EN
-            medio_efectivo = MEDIO_EFECTIVO_ES if lang == "ES" else MEDIO_EFECTIVO_EN
-            medio_pago_sel = st.selectbox(t["medio_pago"], medios_opciones, key="medio_pago_bendicion")
-            es_efectivo = (medio_pago_sel == medio_efectivo)
-
-            if es_efectivo:
-                ministerio = st.selectbox(t["ministerio"], ministerios, key="min_bendicion")
-                st.markdown(f"<p class='big-label'>{t['billetes']}</p>", unsafe_allow_html=True)
-                col1, col2, col3, col4, col5 = st.columns(5)
-                with col1:
-                    b100 = st.number_input("$100", min_value=0, value=0, step=1, key="b100")
-                with col2:
-                    b50 = st.number_input("$50", min_value=0, value=0, step=1, key="b50")
-                with col3:
-                    b20 = st.number_input("$20", min_value=0, value=0, step=1, key="b20")
-                with col4:
-                    b10 = st.number_input("$10", min_value=0, value=0, step=1, key="b10")
-                with col5:
-                    b5 = st.number_input("$5", min_value=0, value=0, step=1, key="b5")
-                st.markdown(f"<p class='big-label'>{t['monedas']}</p>", unsafe_allow_html=True)
-                c1, c2, c3, c4, c5 = st.columns(5)
-                with c1:
-                    m2 = st.number_input("$2", min_value=0, value=0, step=1, key="m2")
-                with c2:
-                    m1 = st.number_input("$1", min_value=0, value=0, step=1, key="m1")
-                with c3:
-                    m025 = st.number_input("$0.25", min_value=0, value=0, step=1, key="m025")
-                with c4:
-                    m010 = st.number_input("$0.10", min_value=0, value=0, step=1, key="m010")
-                with c5:
-                    m005 = st.number_input("$0.05", min_value=0, value=0, step=1, key="m005")
-                total_arqueo = (
-                    b100 * 100 + b50 * 50 + b20 * 20 + b10 * 10 + b5 * 5 +
-                    m2 * 2 + m1 * 1 + m025 * 0.25 + m010 * 0.10 + m005 * 0.05
-                )
-                st.markdown(f"<div class='total-box'>{t['total']}: ${total_arqueo:.2f}</div>", unsafe_allow_html=True)
-            else:
-                monto_no_efectivo = st.number_input(t["monto_pos_tarjeta"], min_value=0.0, value=0.0, step=10.0, key="monto_ingreso_pos")
-                ref_opcional = st.text_input(t["referencia_opcional"], key="ref_pos", max_chars=20, placeholder=t.get("referencia_placeholder", ""))
-
-            if st.button(t["registrar"], key="btn_bendicion"):
-                if es_efectivo:
-                    monto_ingreso = round(total_arqueo, 2)
-                    if monto_ingreso <= 0:
-                        st.warning(t["arqueo_cero"])
-                    else:
-                        rid = generar_id_arqueo()
-                        fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        detalle = f"Arqueo - {ministerio}"
-                        if lang == "ES":
-                            tipo_guardar_ing = tipo_ingreso_sel
-                        else:
-                            try:
-                                idx_ing = TIPOS_INGRESO_EN.index(tipo_ingreso_sel)
-                                tipo_guardar_ing = TIPOS_INGRESO_ES[idx_ing]
-                            except (ValueError, IndexError):
-                                tipo_guardar_ing = DEFAULT_TIPO_INGRESO
-                        nueva = pd.DataFrame([{
-                            "id_registro": rid,
-                            "fecha": fecha_ahora,
-                            "detalle": detalle,
-                            "tipo_gasto": tipo_guardar_ing,
-                            "ingreso": monto_ingreso,
-                            "gastos": 0,
-                            "total_ingresos": 0,
-                            "total_gastos": 0,
-                            "saldo_actual": 0
-                        }])
-                        df = pd.concat([df, nueva], ignore_index=True)
-                        if guardar_db(df, t):
-                            audit_log(usuario_actual, "ingreso_registrado", f"{rid} {detalle} ${monto_ingreso:.2f}")
-                            st.session_state["limpiar_arqueo"] = True
-                            st.success(t["bendicion_registrada"])
-                            st.rerun()
-                else:
-                    monto_ingreso = round(float(monto_no_efectivo), 2) if monto_no_efectivo else 0.0
-                    if monto_ingreso <= 0:
-                        st.warning(t["arqueo_cero"])
-                    else:
-                        rid = generar_id_arqueo()
-                        fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        if lang == "ES":
-                            tipo_guardar_ing = tipo_ingreso_sel
-                        else:
-                            try:
-                                idx_ing = TIPOS_INGRESO_EN.index(tipo_ingreso_sel)
-                                tipo_guardar_ing = TIPOS_INGRESO_ES[idx_ing]
-                            except (ValueError, IndexError):
-                                tipo_guardar_ing = DEFAULT_TIPO_INGRESO
-                        # Etiqueta corta del medio para el detalle
-                        if medio_pago_sel == (MEDIOS_PAGO_ES[1] if lang == "ES" else MEDIOS_PAGO_EN[1]):
-                            sufijo = "POS"
-                        elif medio_pago_sel == (MEDIOS_PAGO_ES[2] if lang == "ES" else MEDIOS_PAGO_EN[2]):
-                            sufijo = "Tarjeta débito" if lang == "ES" else "Debit card"
-                        else:
-                            sufijo = "Transferencia" if lang == "ES" else "Transfer"
-                        ref = (ref_opcional or "").strip()[:20]
-                        if ref:
-                            detalle = f"{tipo_guardar_ing} ({sufijo} ****{ref})"
-                        else:
-                            detalle = f"{tipo_guardar_ing} ({sufijo})"
-                        nueva = pd.DataFrame([{
-                            "id_registro": rid,
-                            "fecha": fecha_ahora,
-                            "detalle": detalle,
-                            "tipo_gasto": tipo_guardar_ing,
-                            "ingreso": monto_ingreso,
-                            "gastos": 0,
-                            "total_ingresos": 0,
-                            "total_gastos": 0,
-                            "saldo_actual": 0
-                        }])
-                        df = pd.concat([df, nueva], ignore_index=True)
-                        if guardar_db(df, t):
-                            audit_log(usuario_actual, "ingreso_registrado", f"{rid} {detalle} ${monto_ingreso:.2f}")
-                            st.session_state["limpiar_arqueo"] = True
-                            st.success(t["bendicion_registrada"])
-                            st.rerun()
-
-    # ---------- REGISTRAR GASTO (monto como texto para que el 0 desaparezca al escribir; ID RG) ----------
-    MAX_CARACTERES_DESCRIPCION = 1000
-    if tiene_permiso(usuario_actual, "ver_registrar_gasto"):
-        # Limpiar campos de gasto en el siguiente run (no se puede modificar session_state tras crear el widget)
-        if st.session_state.get("limpiar_gasto"):
-            for key in ["desc_g", "monto_g"]:
-                if key in st.session_state:
-                    st.session_state[key] = ""
-            try:
-                if "foto_gasto" in st.session_state:
-                    del st.session_state["foto_gasto"]
-            except Exception:
-                pass
-            st.session_state["limpiar_gasto"] = False
-        with st.expander(f"📤 {t['registrar_gasto']}", expanded=True):
-            with st.form("form_gasto", clear_on_submit=True):
-                tipo_opciones = TIPOS_GASTO_ES if lang == "ES" else TIPOS_GASTO_EN
-                tipo_seleccionado = st.selectbox(t["tipo_gasto"], options=tipo_opciones, key="tipo_gasto_sel")
-                monto_sugerido = st.session_state.get("monto_sugerido", "")
-                monto_texto = st.text_input(t["monto"], value=monto_sugerido, placeholder="0.00", key="monto_g")
-                enviado = st.form_submit_button(t["registrar"])
-            desc_sugerida = st.session_state.get("descripcion_sugerida", "")
-            desc_gasto = st.text_input(t["descripcion"], value=desc_sugerida, max_chars=MAX_CARACTERES_DESCRIPCION, key="desc_g")
-            n_car = len(desc_gasto or "")
-            st.markdown(
-                f"<p style='font-size:0.75rem; color: {sidebar_txt_muted}; margin-top: -0.5rem;'>{n_car} / {MAX_CARACTERES_DESCRIPCION} {t['caracteres']}</p>",
-                unsafe_allow_html=True
-            )
-            aprobado_por_gasto = st.text_input(t["aprobado_por"] + f" {UMBRAL_GASTO_APROBACION:.0f})", key="aprobado_por_g", max_chars=100, placeholder="Nombre de quien aprueba")
-            st.markdown(f"<p class='big-label'>{t['tomar_foto']}</p>", unsafe_allow_html=True)
-            foto_subida = st.file_uploader(" ", type=["jpg", "jpeg", "png"], key="foto_gasto")
-
-            # OCR y detección de duplicados cuando hay imagen subida
-            if foto_subida:
-                bytes_foto = foto_subida.getvalue()
-                hash_foto = _hash_imagen(bytes_foto)
-                if imagen_ya_subida(hash_foto):
-                    st.warning(t["imagen_ya_subida_aviso"])
-                if st.session_state.get("hash_foto_actual") != hash_foto:
-                    ocr_text = _ocr_imagen(bytes_foto)
-                    datos = _extraer_datos_factura(ocr_text)
-                    st.session_state["factura_detectada_actual"] = datos
-                    st.session_state["ocr_text_actual"] = ocr_text
-                    st.session_state["hash_foto_actual"] = hash_foto
-                    st.session_state["monto_sugerido"] = f"{datos['total']:.2f}" if datos.get("total") is not None else ""
-                    st.session_state["descripcion_sugerida"] = (datos.get("comercio") or "")[:MAX_CARACTERES_DESCRIPCION]
-                    st.rerun()
-                datos_show = st.session_state.get("factura_detectada_actual") or {}
-                if datos_show and (datos_show.get("total") is not None or datos_show.get("comercio")):
-                    with st.expander(f"📋 {t['factura_detectada']}", expanded=True):
-                        if datos_show.get("total") is not None:
-                            st.markdown(f"**{t['total_detectado']}:** ${datos_show['total']:.2f}")
-                        if datos_show.get("impuesto") is not None:
-                            st.markdown(f"**{t['impuesto_detectado']}:** ${datos_show['impuesto']:.2f}")
-                        if datos_show.get("comercio"):
-                            st.markdown(f"**{t['comercio_detectado']}:** {datos_show['comercio'][:100]}")
-
-            if enviado:
-                rid = generar_id_gasto()
-                try:
-                    monto_parse = (monto_texto or "").strip().replace(",", ".")
-                    monto_final = round(float(monto_parse) if monto_parse else 0.0, 2)
-                except (ValueError, TypeError):
-                    monto_final = 0.0
-                if monto_final < 0:
-                    monto_final = 0.0
-                monto_final = round(float(monto_final), 2)
-                if monto_final <= 0:
-                    st.warning(t["gasto_cero"])
-                else:
-                    foto_ruta = ""
-                    if foto_subida:
-                        carpeta_fotos = "fotos_gastos"
-                        os.makedirs(carpeta_fotos, exist_ok=True)
-                        bytes_orig = foto_subida.getvalue()
-                        bytes_guardar = _comprimir_imagen(bytes_orig)
-                        base_name = os.path.splitext(os.path.basename(getattr(foto_subida, "name", "foto")))[0].replace("\\", "_").replace("/", "_")[:60]
-                        nombre_foto = f"{rid}_{base_name}.jpg"
-                        ruta = os.path.join(carpeta_fotos, nombre_foto)
-                        try:
-                            with open(ruta, "wb") as f:
-                                f.write(bytes_guardar)
-                            foto_ruta = ruta
-                        except Exception as e:
-                            st.warning(t["gasto_foto_no"].format(e=str(e)))
-                    fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    detalle_gasto = (desc_gasto or "Gasto")[:MAX_CARACTERES_DESCRIPCION]
-                    if monto_final >= UMBRAL_GASTO_APROBACION and (aprobado_por_gasto or "").strip():
-                        detalle_gasto = (detalle_gasto + " (Aprobado por: " + (aprobado_por_gasto or "").strip()[:80] + ")")[:MAX_CARACTERES_DESCRIPCION]
-                    if lang == "ES":
-                        tipo_guardar = tipo_seleccionado
-                    else:
-                        try:
-                            idx = TIPOS_GASTO_EN.index(tipo_seleccionado)
-                            tipo_guardar = TIPOS_GASTO_ES[idx]
-                        except (ValueError, IndexError):
-                            tipo_guardar = DEFAULT_TIPO_GASTO
-                    nueva = pd.DataFrame([{
-                        "id_registro": rid,
-                        "fecha": fecha_ahora,
-                        "detalle": detalle_gasto,
-                        "tipo_gasto": tipo_guardar,
-                        "ingreso": 0,
-                        "gastos": monto_final,
-                        "total_ingresos": 0,
-                        "total_gastos": 0,
-                        "saldo_actual": 0
-                    }])
-                    df = pd.concat([df, nueva], ignore_index=True)
-                    if guardar_db(df, t):
-                        audit_log(usuario_actual, "gasto_registrado", f"{rid} ${monto_final:.2f} {detalle_gasto[:50]}")
-                        if foto_subida:
-                            bytes_foto = foto_subida.getvalue()
-                            hash_foto = _hash_imagen(bytes_foto)
-                            ocr_text = _ocr_imagen(bytes_foto)
-                            datos_f = _extraer_datos_factura(ocr_text)
-                            guardar_factura({
-                                "id_registro": rid,
-                                "hash_imagen": hash_foto,
-                                "ocr_text": ocr_text,
-                                "total": monto_final,
-                                "impuesto": datos_f.get("impuesto"),
-                                "subtotal": datos_f.get("subtotal"),
-                                "comercio": detalle_gasto,
-                                "tipo_gasto": tipo_guardar,
-                                "items": datos_f.get("items", []),
-                                "fecha_factura": datos_f.get("fecha_texto", ""),
-                                "fecha_registro": fecha_ahora,
-                            })
-                        for key in ("monto_sugerido", "descripcion_sugerida", "factura_detectada_actual", "ocr_text_actual", "hash_foto_actual"):
-                            st.session_state.pop(key, None)
-                        st.session_state["limpiar_gasto"] = True
-                        st.success(f"{t['gasto_registrado']} ${monto_final:.2f}")
-                        st.rerun()
 
     # ---------- BUSCAR FACTURAS (POR COMERCIO, FECHA, TOTAL, TEXTO OCR) ----------
     if tiene_permiso(usuario_actual, "ver_hoja_contable"):
@@ -2920,6 +4029,9 @@ def main():
                 df = _recalcular_totales_ledger(df)
             df_show = df.copy()
             df_show["puede_borrar"] = df_show["fecha"].apply(puede_borrar)
+            meta_borrar = cargar_arqueo_meta()
+            fechas_cerradas = set(meta_borrar.get("_fechas_cerradas", []) or [])
+            df_show["fecha_cerrada"] = df_show["fecha"].astype(str).str[:10].isin(fechas_cerradas)
             # --- Filtros ---
             st.markdown(f"**{t['filtros']}**")
             col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
@@ -2986,11 +4098,13 @@ def main():
             else:
                 columnas_ver = [c for c in COLUMNAS_LEDGER if c in filtered.columns]
                 display_df = filtered[columnas_ver].copy()
-                # Mostrar TIPO siempre con texto (nunca "None"): rellenar vacíos/NaN con "—"
-                if "tipo_gasto" in display_df.columns:
-                    display_df["tipo_gasto"] = display_df["tipo_gasto"].apply(
-                        lambda x: (str(x).strip() if pd.notna(x) and str(x).strip() and str(x).lower() != "nan" else "—")
+                es_maestro = (st.session_state.get("es_acceso_maestro") or ES_PC_MAESTRO) and usuario_actual == "admin"
+                if es_maestro:
+                    meta = cargar_arqueo_meta()
+                    display_df["ip_dispositivo"] = display_df["id_registro"].apply(
+                        lambda rid: meta.get(str(rid), {}).get("ip_dispositivo", "—")
                     )
+                    columnas_ver = list(display_df.columns)
                 nombres_columnas = {
                     "id_registro": t["col_id_registro"],
                     "fecha": t["col_fecha"],
@@ -3001,6 +4115,7 @@ def main():
                     "total_ingresos": t["col_total_ingresos"],
                     "total_gastos": t["col_total_gastos"],
                     "saldo_actual": t["col_saldo_actual"],
+                    "ip_dispositivo": t["col_ip"],
                 }
                 def _fmt_monto_celda(x):
                     try:
@@ -3034,26 +4149,107 @@ def main():
                         if st.button(t["siguiente"], key="btn_next_pag", disabled=(pag_actual >= n_pag - 1)):
                             st.session_state["pagina_hoja"] = pag_actual + 1
                             st.rerun()
-                if tiene_permiso(usuario_actual, "ver_eliminar_registros"):
-                    st.markdown(f"**{t['limpiar_fila']}** (solo dentro de 30 min):")
-                    pendiente = st.session_state.get("eliminar_pendiente")
-                    for i, row in filtered.iterrows():
-                        if row["puede_borrar"]:
-                            id_reg = row.get("id_registro", i)
-                            if pendiente == (i, id_reg):
-                                if st.button(f"✓ {t['confirmar_eliminar']} {id_reg}", key=f"confirm_del_{i}"):
-                                    df = df.drop(index=i).reset_index(drop=True)
-                                    st.session_state.pop("eliminar_pendiente", None)
-                                    if guardar_db(df, t):
-                                        audit_log(usuario_actual, "registro_eliminado", str(id_reg))
-                                        st.rerun()
-                                if st.button("✕ Cancelar", key=f"cancel_del_{i}"):
-                                    st.session_state.pop("eliminar_pendiente", None)
+                es_maestro = st.session_state.get("es_acceso_maestro") and usuario_actual == "admin"
+                if tiene_permiso(usuario_actual, "ver_eliminar_registros") or es_maestro:
+                    titulo_limpiar = t["limpiar_fila"] + (f" ({t['maestro_sin_limite']})" if es_maestro else f" ({t['solo_30min']})")
+                    st.markdown(f"**{titulo_limpiar}:**")
+                    modo_borrar = st.session_state.get("modo_borrar_registros", False)
+                    if st.button(f"🗑️ {t['borrar_btn']}", key="btn_activar_borrar"):
+                        st.session_state["modo_borrar_registros"] = not modo_borrar
+                        st.rerun()
+                    if modo_borrar:
+                        st.caption(t["maestro_seleccionar_masa"])
+                        indices_pagina = [idx for idx in display_pag.index if (filtered.loc[idx, "puede_borrar"] or es_maestro) and not filtered.loc[idx, "fecha_cerrada"]]
+                        if st.button(t["seleccionar_todos"], key="btn_seleccionar_todos"):
+                            for idx in indices_pagina:
+                                st.session_state[f"borrar_cb_{idx}"] = True
+                            st.rerun()
+                        st.markdown("""<style>
+                        div[data-testid='stCheckbox'] { transform: scale(0.88); }
+                        div[data-testid='stCheckbox'] input:checked + label { color: #22c55e !important; }
+                        </style>""", unsafe_allow_html=True)
+                        n_cols = 4
+                        for j in range(0, len(indices_pagina), n_cols):
+                            cols = st.columns(n_cols)
+                            for k in range(n_cols):
+                                idx_pos = j + k
+                                if idx_pos < len(indices_pagina):
+                                    idx = indices_pagina[idx_pos]
+                                    row = filtered.loc[idx]
+                                    id_reg = row.get("id_registro", idx)
+                                    det = (row.get("detalle") or "")[:15]
+                                    fecha = str(row.get("fecha", ""))[:10]
+                                    with cols[k]:
+                                        st.checkbox(f"✓ {id_reg}", key=f"borrar_cb_{idx}")
+                                        st.caption(f"{fecha} {det}", help=f"{id_reg}")
+                        col_sel, col_tod = st.columns(2)
+                        with col_sel:
+                            indices_sel = [idx for idx in filtered.index if (filtered.loc[idx, "puede_borrar"] or es_maestro) and not filtered.loc[idx, "fecha_cerrada"] and st.session_state.get(f"borrar_cb_{idx}", False)]
+                            n_sel = len(indices_sel)
+                            if st.button(f"🗑️ {t['borrar_seleccionados']} ({n_sel})", key="btn_borrar_sel", disabled=(n_sel == 0)):
+                                df = df.drop(index=indices_sel).reset_index(drop=True)
+                                for idx in indices_sel:
+                                    st.session_state.pop(f"borrar_cb_{idx}", None)
+                                if guardar_db(df, t):
+                                    audit_log(usuario_actual, "registro_eliminado_masa", str(n_sel))
+                                    st.session_state["modo_borrar_registros"] = False
                                     st.rerun()
-                            elif st.button(f"✕ {t['eliminar']} — {id_reg}", key=f"del_{id_reg}_{i}"):
-                                st.session_state["eliminar_pendiente"] = (i, id_reg)
+                        with col_tod:
+                            if st.button(t["borrar_todos"], key="btn_borrar_todos"):
+                                st.session_state["confirmar_borrar_todos"] = True
                                 st.rerun()
-            if ES_PC_MAESTRO:
+                        if st.session_state.get("confirmar_borrar_todos"):
+                            st.warning(t["confirmar_limpiar_todo"])
+                            conf = st.text_input("", key="input_confirmar_borrar_todos", placeholder=CONFIRMACION_LIMPIAR_TODO)
+                            if st.button(t["maestro_borrar_todo"], key="btn_confirmar_borrar_todos"):
+                                if (conf or "").strip().upper() == CONFIRMACION_LIMPIAR_TODO:
+                                    idx_a_borrar = filtered.index[~filtered["fecha_cerrada"]]
+                                    df = df.drop(index=idx_a_borrar).reset_index(drop=True)
+                                    if guardar_db(df, t):
+                                        audit_log(usuario_actual, "registro_eliminado_masa", str(len(idx_a_borrar)))
+                                        st.session_state.pop("confirmar_borrar_todos", None)
+                                        st.session_state["modo_borrar_registros"] = False
+                                        for idx in filtered.index:
+                                            st.session_state.pop(f"borrar_cb_{idx}", None)
+                                        st.rerun()
+                                else:
+                                    st.warning(t["confirmar_limpiar_todo"])
+                            if st.button("✕ Cancelar", key="btn_cancelar_borrar_todos"):
+                                st.session_state.pop("confirmar_borrar_todos", None)
+                                st.rerun()
+            if st.session_state.get("es_acceso_maestro") and usuario_actual == "admin":
+                st.markdown("---")
+                st.markdown(f"**{t['maestro_borrar_titulo']}**")
+                with st.expander(t["maestro_borrar_todo"], expanded=False):
+                    st.caption(t["confirmar_limpiar_todo"])
+                    confirmar_limpiar = st.text_input("", key="input_limpiar_todo", placeholder=CONFIRMACION_LIMPIAR_TODO)
+                    if st.button(t["maestro_borrar_todo"], key="btn_limpiar_todo"):
+                        if (confirmar_limpiar or "").strip().upper() == CONFIRMACION_LIMPIAR_TODO:
+                            if reiniciar_tesoreria_master():
+                                audit_log(usuario_actual, "limpiar_tablero_completo", "")
+                                st.success(t["reinicio_ok"])
+                                st.rerun()
+                            else:
+                                st.error(t["error_limpiar_tablero"])
+                        else:
+                            st.warning(t["confirmar_limpiar_todo"])
+                with st.expander(t["maestro_borrar_detalle"], expanded=False):
+                    st.caption(t["maestro_seleccionar_detalle"])
+                    texto_detalle = st.text_input("", key="input_maestro_detalle", placeholder=t.get("descripcion", "Descripción"))
+                    if texto_detalle and texto_detalle.strip():
+                        col_detalle = "detalle" if "detalle" in df.columns else "descripcion"
+                        mask_det = df[col_detalle].astype(str).str.upper().str.contains(texto_detalle.strip().upper(), na=False)
+                        n_coincidencias = mask_det.sum()
+                        if n_coincidencias > 0:
+                            st.caption(t["maestro_coinciden_registros"].format(n=n_coincidencias))
+                            if st.button(f"🗑️ {t['maestro_borrar_detalle']} ({n_coincidencias})", key="btn_borrar_detalle"):
+                                df = df[~mask_det].reset_index(drop=True)
+                                if guardar_db(df, t):
+                                    audit_log(usuario_actual, "registro_eliminado_detalle", texto_detalle.strip())
+                                    st.rerun()
+                        else:
+                            st.caption(t["sin_resultados_filtro"])
+            elif ES_PC_MAESTRO:
                 st.markdown("---")
                 st.markdown(f"**{t['limpiar_todo_tablero']}**")
                 st.caption(t["confirmar_limpiar_todo"])
@@ -3069,54 +4265,56 @@ def main():
                     else:
                         st.warning(t["confirmar_limpiar_todo"])
 
-    # ---------- EXPORTAR HOJA CONTABLE PDF ----------
+    # ---------- EXPORTAR HOJA CONTABLE (PDF, EXCEL, PARA CONTADOR) ----------
     st.markdown("---")
-    if tiene_permiso(usuario_actual, "ver_exportar_hoja_pdf"):
-        if st.button(f"📄 {t['exportar_hoja_pdf']}", key="btn_hoja_pdf"):
-            df_hoja = cargar_db()
-            if df_hoja.empty:
+    puede_exportar = tiene_permiso(usuario_actual, "ver_exportar_hoja_pdf") or tiene_permiso(usuario_actual, "ver_hoja_contable")
+    if puede_exportar:
+        with st.expander(f"📤 {t['exportar_hoja_contable_titulo']}", expanded=True):
+            st.caption(t["exportar_hoja_contable_ayuda"])
+            df_exp = cargar_db()
+            if df_exp.empty:
                 st.warning(t["sin_movimientos"])
             else:
-                if "fecha" in df_hoja.columns:
-                    df_hoja = df_hoja.sort_values("fecha", ascending=True).reset_index(drop=True)
-                    df_hoja = _recalcular_totales_ledger(df_hoja)
-                pdf_hoja = generar_pdf_hoja_contable(df_hoja, lang)
-                pdf_hoja.seek(0)
-                st.download_button(
-                    label=t["exportar_hoja_pdf"],
-                    data=pdf_hoja.getvalue(),
-                    file_name=f"Hoja_Contable_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                    mime="application/pdf",
-                    key="download_hoja_pdf"
-                )
-    # Exportar CSV y Excel para contador
-    if tiene_permiso(usuario_actual, "ver_exportar_hoja_pdf") or tiene_permiso(usuario_actual, "ver_hoja_contable"):
-        df_exp = cargar_db()
-        if not df_exp.empty:
-            col_csv, col_xlsx = st.columns(2)
-            with col_csv:
-                csv_bytes = "\ufeff" + df_exp.to_csv(index=False, encoding="utf-8", date_format="%Y-%m-%d")
-                st.download_button(
-                    label=t["exportar_contador"],
-                    data=csv_bytes.encode("utf-8"),
-                    file_name=f"Tesorería_contador_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                    mime="text/csv",
-                    key="download_contador"
-                )
-            with col_xlsx:
-                try:
-                    buf_xlsx = BytesIO()
-                    df_exp.to_excel(buf_xlsx, index=False, engine="openpyxl")
-                    buf_xlsx.seek(0)
+                if "fecha" in df_exp.columns:
+                    df_exp = df_exp.sort_values("fecha", ascending=True).reset_index(drop=True)
+                    df_exp = _recalcular_totales_ledger(df_exp)
+                col_pdf, col_xlsx, col_csv = st.columns(3)
+                with col_pdf:
+                    st.markdown(f"**{t['exportar_opcion_pdf']}**")
+                    pdf_hoja = generar_pdf_hoja_contable(df_exp, lang)
+                    pdf_hoja.seek(0)
                     st.download_button(
-                        label=t["exportar_excel"],
-                        data=buf_xlsx.getvalue(),
-                        file_name=f"Tesorería_contador_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="download_excel"
+                        label=t["exportar_opcion_pdf"],
+                        data=pdf_hoja.getvalue(),
+                        file_name=f"Hoja_Contable_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                        mime="application/pdf",
+                        key="download_hoja_pdf"
                     )
-                except Exception:
-                    pass
+                with col_xlsx:
+                    st.markdown(f"**{t['exportar_opcion_excel']}**")
+                    try:
+                        buf_xlsx = BytesIO()
+                        df_exp.to_excel(buf_xlsx, index=False, engine="openpyxl")
+                        xlsx_bytes = _formatear_excel_contador(buf_xlsx)
+                        st.download_button(
+                            label=t["exportar_opcion_excel"],
+                            data=xlsx_bytes,
+                            file_name=f"Hoja_Contable_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="download_excel"
+                        )
+                    except Exception:
+                        st.caption("Excel no disponible" if lang == "ES" else "Excel not available")
+                with col_csv:
+                    st.markdown(f"**{t['exportar_opcion_contador']}**")
+                    csv_bytes = "\ufeff" + df_exp.to_csv(index=False, encoding="utf-8", date_format="%Y-%m-%d")
+                    st.download_button(
+                        label=t["exportar_opcion_contador"],
+                        data=csv_bytes.encode("utf-8"),
+                        file_name=f"Hoja_Contable_contador_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                        mime="text/csv",
+                        key="download_contador"
+                    )
 
     # ---------- INFORME PDF PARA WHATSAPP ----------
     if tiene_permiso(usuario_actual, "ver_informe_pdf"):

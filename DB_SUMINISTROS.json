@@ -1,0 +1,14 @@
+{
+  "suministros": [
+    "Luz",
+    "Agua",
+    "Gas",
+    "Internet",
+    "Teléfono",
+    "Seguro",
+    "Calefacción",
+    "Mantenimiento edificio",
+    "Limpieza",
+    "Otros suministros"
+  ]
+}

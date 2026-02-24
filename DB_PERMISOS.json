@@ -9,23 +9,49 @@
     "tesorero": {
       "nombre": "Tesorero",
       "permisos": [
-        "ver_registrar_gasto",
-        "ver_hoja_contable",
         "ver_informe_pdf",
         "ver_exportar_hoja_pdf",
-        "ver_inicio",
-        "ver_ministerio_finanzas",
+        "ver_hoja_contable",
+        "ver_registrar_gasto",
+        "ver_contabilidad",
+        "ver_eliminar_registros",
+        "ver_arqueo_caja",
+        "ver_tesoreria",
         "ver_ingresar_bendicion",
-        "ver_eliminar_registros"
+        "ver_inicio"
       ]
     },
     "ministerio_musica": {
       "nombre": "Ministerio de Música",
       "permisos": [
-        "ver_inicio",
-        "ver_ministerio_finanzas",
+        "ver_informe_pdf",
         "ver_hoja_contable",
-        "ver_informe_pdf"
+        "ver_contabilidad",
+        "ver_arqueo_caja",
+        "ver_tesoreria",
+        "ver_inicio"
+      ]
+    },
+    "asistente": {
+      "nombre": "Asistente",
+      "permisos": [
+        "ver_inicio",
+        "ver_arqueo_caja"
+      ]
+    },
+    "pastor": {
+      "nombre": "Pastor",
+      "permisos": [
+        "ver_inicio",
+        "ver_arqueo_caja",
+        "ver_tesoreria",
+        "ver_contabilidad",
+        "ver_presupuesto_metas",
+        "ver_ingresar_bendicion",
+        "ver_registrar_gasto",
+        "ver_hoja_contable",
+        "ver_informe_pdf",
+        "ver_exportar_hoja_pdf"
       ]
     }
   }
