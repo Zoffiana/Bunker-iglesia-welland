@@ -3034,6 +3034,19 @@ def main():
         st.markdown(f"## 📋 {t['arqueo_caja']}")
         st.caption(t["arqueo_caja_sub"])
         st.markdown("")
+        st.markdown("""<style>
+        @media (max-width: 768px) {
+        .main input[type="number"],
+        .main [data-testid="stNumberInput"] input {
+          font-size: 1.9rem !important;
+          font-weight: bold !important;
+          padding: 0.9rem 0.6rem !important;
+          text-align: center !important;
+          min-height: 2.8rem !important;
+        }
+        .main [data-testid="stNumberInput"] label { font-size: 1.1rem !important; }
+        }
+        </style>""", unsafe_allow_html=True)
         # Resumen del día
         hoy_str = datetime.now().strftime("%Y-%m-%d")
         df_hoy = df[df["fecha"].astype(str).str[:10] == hoy_str] if not df.empty and "fecha" in df.columns else pd.DataFrame()
@@ -3170,11 +3183,13 @@ def main():
                     if "_last_total_arqueo" not in st.session_state or abs(st.session_state.get("_last_total_arqueo", 0) - total_arqueo) > 0.01:
                         st.session_state["total_suelto_arqueo"] = round(total_arqueo, 2)
                         st.session_state["_last_total_arqueo"] = total_arqueo
+                    if "total_suelto_arqueo" not in st.session_state:
+                        st.session_state["total_suelto_arqueo"] = round(total_arqueo, 2)
                     st.caption(t.get("arqueo_teclado_movil", ""))
                     st.markdown(f"**{t.get('arqueo_total_calculado', 'Total billetes + monedas')}:** ${total_arqueo:.2f}")
                     sobres_cant = st.number_input(t["sobres_cantidad"], min_value=0, value=0, step=1, key="sobres_cant_arqueo", disabled=not campos_habilitados)
                     sobres_tot = st.number_input(t["sobres_total"], min_value=0.0, value=0.0, step=10.0, key="sobres_tot_arqueo", disabled=not campos_habilitados)
-                    total_suelto = st.number_input(t["total_suelto"], min_value=0.0, value=round(total_arqueo, 2), step=10.0, key="total_suelto_arqueo", disabled=not campos_habilitados)
+                    total_suelto = st.number_input(t["total_suelto"], min_value=0.0, step=10.0, key="total_suelto_arqueo", disabled=not campos_habilitados)
                     st.caption("Verifique que el contenido de cada sobre coincida con lo escrito." if lang == "ES" else "Verify envelope contents match written amounts.")
                     st.markdown(f"<div class='total-box'>{t['total']}: ${total_arqueo:.2f}</div>", unsafe_allow_html=True)
                 elif not es_cheques:
@@ -3560,7 +3575,7 @@ def main():
                         for idx_f, fup in enumerate(foto_subidas):
                             lbl = (t.get("foto_frente", "Frente"), t.get("foto_reverso", "Reverso"), t.get("foto_anexo", "Anexo"))[min(idx_f, 2)] if idx_f < 3 else f"#{idx_f + 1}"
                             st.caption(lbl if len(foto_subidas) > 1 else "")
-                            st.image(fup.getvalue(), use_column_width=True)
+                            st.image(fup.getvalue(), use_container_width=True)
                         if datos_show.get("total") is not None:
                             st.markdown(f"**{t['total_detectado']}:** ${datos_show['total']:.2f}")
                         if datos_show.get("impuesto") is not None:
