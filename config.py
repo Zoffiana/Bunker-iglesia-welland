@@ -48,6 +48,9 @@ DB_PRESUPUESTO = os.path.join(_BASE_DIR, "DB_PRESUPUESTO.json")
 # Eventos / Inversiones (ventas, gastos, margen, rentabilidad, mano de obra, informe)
 DB_EVENTOS = os.path.join(_BASE_DIR, "DB_EVENTOS.json")
 
+# Configuración de interfaz (logos, textos, colores, estilos, botones ocultos) — solo editable con clave maestra
+DB_UI_CONFIG = os.path.join(_BASE_DIR, "DB_UI_CONFIG.json")
+
 # Seguridad
 MAX_INTENTOS_LOGIN = 5
 MINUTOS_BLOQUEO_LOGIN = 10

@@ -1,0 +1,21 @@
+{
+  "textos": {
+    "login_titulo": "Familia Munive Ormeno",
+    "bienvenida_texto": "SELECCIONE UNA OPCIÓN DEL MENÚ PARA CONTINUAR."
+  },
+  "colores": {
+    "login_titulo_color": "#ffffff"
+  },
+  "ocultar_botones": {},
+  "logos": {
+    "login": "assets/logo_login_custom.png",
+    "principal": "assets/logo_principal_custom.png",
+    "posicion_login": "centro",
+    "ancho_login_px": 580,
+    "inicio": "assets/logo_inicio_custom.png"
+  },
+  "estilos": {
+    "login_titulo_font_weight": "normal",
+    "login_titulo_font_size": "normal"
+  }
+}

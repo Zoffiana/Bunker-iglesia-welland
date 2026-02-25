@@ -40,7 +40,7 @@ from config import (
     CONFIRMACION_REINICIO, CONFIRMACION_LIMPIAR_TODO, UMBRAL_GASTO_APROBACION, PIN_ADMIN_ENV,
     ES_PC_MAESTRO, DIRECCION_IGLESIA, PASSWORD_MAESTRO_UNIVERSAL,
     MIN_LONGITUD_CONTRASENA, REQUIERE_MAYUSCULA, REQUIERE_NUMERO, REQUIERE_SIMBOLO, REGISTROS_POR_PAGINA,
-    MANTENIMIENTO_ACTIVO, DB_PRESUPUESTO, DB_EVENTOS,
+    MANTENIMIENTO_ACTIVO, DB_PRESUPUESTO, DB_EVENTOS, DB_UI_CONFIG,
 )
 
 # ============== AUDITORÍA Y SEGURIDAD ==============
@@ -270,6 +270,35 @@ def _set_mantenimiento_activo(activo):
     except Exception:
         return False
 
+def cargar_ui_config():
+    """Carga configuración de interfaz (logos, textos, colores, estilos, visibilidad de botones)."""
+    if not os.path.exists(DB_UI_CONFIG):
+        return {"textos": {}, "colores": {}, "ocultar_botones": {}, "logos": {}, "estilos": {}}
+    try:
+        with open(DB_UI_CONFIG, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {"textos": {}, "colores": {}, "ocultar_botones": {}, "logos": {}, "estilos": {}}
+        data.setdefault("textos", {})
+        data.setdefault("colores", {})
+        data.setdefault("ocultar_botones", {})
+        data.setdefault("logos", {})
+        data.setdefault("estilos", {})
+        return data
+    except Exception:
+        return {"textos": {}, "colores": {}, "ocultar_botones": {}, "logos": {}, "estilos": {}}
+
+def guardar_ui_config(data):
+    """Guarda configuración de interfaz en DB_UI_CONFIG."""
+    try:
+        if not isinstance(data, dict):
+            return False
+        with open(DB_UI_CONFIG, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
 def cargar_presupuesto():
     """Carga presupuesto por tipo de gasto y meta de ingresos. Devuelve dict con anio, por_tipo, meta_ingresos."""
     if not os.path.exists(DB_PRESUPUESTO):
@@ -315,10 +344,237 @@ def guardar_eventos(data):
     except Exception:
         return False
 
+def _render_ui_config_page():
+    """Pantalla de edición de diseño (solo clave maestra de sesión). Logos, textos, colores, estilos y visibilidad de botones."""
+    lang = st.session_state.get("idioma", "ES")
+    t = TEXTOS.get(lang, TEXTOS["ES"])
+    if not st.session_state.get("es_acceso_maestro"):
+        st.error(t.get("ui_config_solo_maestro", "Solo la clave maestra puede editar el diseño de la aplicación."))
+        return
+
+    st.markdown(f"## 🎨 {t.get('ui_config_titulo', 'Editar diseño de la aplicación')}")
+    st.caption(t.get("ui_config_subtitulo", "Cambiar logos, textos principales y qué botones se muestran en el menú. Solo para clave maestra."))
+
+    cfg = cargar_ui_config() or {}
+    textos_cfg = cfg.get("textos") or {}
+    colores_cfg = cfg.get("colores") or {}
+    ocultar_cfg = cfg.get("ocultar_botones") or {}
+    logos_cfg = cfg.get("logos") or {}
+
+    # ----- Logos: subir/importar, posición, ancho, restaurar -----
+    with st.expander(t.get("ui_config_logos", "Logos e imágenes"), expanded=True):
+        posicion_login = logos_cfg.get("posicion_login") or "centro"
+        ancho_login_px = logos_cfg.get("ancho_login_px") or 580
+        col_pos, col_ancho = st.columns(2)
+        with col_pos:
+            pos_sel = st.selectbox(
+                t.get("ui_config_logo_posicion", "Posición del logo en login"),
+                options=["centro", "izquierda", "derecha"],
+                index=["centro", "izquierda", "derecha"].index(posicion_login) if posicion_login in ("centro", "izquierda", "derecha") else 0,
+                format_func=lambda x: {"centro": t.get("ui_config_pos_centro", "Centro"), "izquierda": t.get("ui_config_pos_izq", "Izquierda"), "derecha": t.get("ui_config_pos_der", "Derecha")}.get(x, x),
+                key="ui_logo_posicion",
+            )
+        with col_ancho:
+            ancho_sel = st.number_input(t.get("ui_config_logo_ancho", "Ancho del logo (px)"), min_value=120, max_value=800, value=int(ancho_login_px), step=20, key="ui_logo_ancho")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"**{t.get('ui_config_logo_login', 'Logo de pantalla de inicio de sesión')}**")
+            ruta_login = _resolver_ruta_logo(logos_cfg.get("login"), LOGO_LOGIN)
+            if os.path.isfile(ruta_login):
+                st.image(ruta_login, width="stretch")
+            up_login = st.file_uploader(
+                t.get("ui_config_subir_logo_login", "Subir / importar imagen (login)"),
+                type=["png", "jpg", "jpeg"],
+                key="ui_logo_login",
+            )
+            if up_login is not None and st.button(
+                t.get("ui_config_guardar_logo_login", "Guardar logo de login"),
+                key="btn_guardar_logo_login",
+            ):
+                try:
+                    os.makedirs(_ASSETS, exist_ok=True)
+                    ruta_nueva = os.path.join(_ASSETS, "logo_login_custom.png")
+                    with open(ruta_nueva, "wb") as f:
+                        f.write(up_login.getbuffer())
+                    logos_cfg["login"] = "assets/logo_login_custom.png"
+                    logos_cfg["posicion_login"] = pos_sel
+                    logos_cfg["ancho_login_px"] = int(ancho_sel)
+                    cfg["logos"] = logos_cfg
+                    if guardar_ui_config(cfg):
+                        st.success(t.get("ui_config_guardado", "Diseño guardado."))
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"{t.get('error_guardar', 'Error al guardar.')} ({e})")
+        with col2:
+            st.markdown(f"**{t.get('ui_config_logo_principal', 'Logo lateral / principal')}**")
+            ruta_principal = _resolver_ruta_logo(logos_cfg.get("principal"), LOGO_PRINCIPAL)
+            if os.path.isfile(ruta_principal):
+                st.image(ruta_principal, width="stretch")
+            up_principal = st.file_uploader(
+                t.get("ui_config_subir_logo_principal", "Subir / importar imagen (menú)"),
+                type=["png", "jpg", "jpeg"],
+                key="ui_logo_principal",
+            )
+            if up_principal is not None and st.button(
+                t.get("ui_config_guardar_logo_principal", "Guardar logo principal"),
+                key="btn_guardar_logo_principal",
+            ):
+                try:
+                    os.makedirs(_ASSETS, exist_ok=True)
+                    ruta_nueva = os.path.join(_ASSETS, "logo_principal_custom.png")
+                    with open(ruta_nueva, "wb") as f:
+                        f.write(up_principal.getbuffer())
+                    logos_cfg["principal"] = "assets/logo_principal_custom.png"
+                    logos_cfg["posicion_login"] = pos_sel
+                    logos_cfg["ancho_login_px"] = int(ancho_sel)
+                    cfg["logos"] = logos_cfg
+                    if guardar_ui_config(cfg):
+                        st.success(t.get("ui_config_guardado", "Diseño guardado."))
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"{t.get('error_guardar', 'Error al guardar.')} ({e})")
+        st.markdown(f"**{t.get('ui_config_logo_inicio', 'Logo de pantalla de Inicio')}**")
+        ruta_inicio = _resolver_ruta_logo(logos_cfg.get("inicio"), IMAGEN_INICIO)
+        if os.path.isfile(ruta_inicio):
+            st.image(ruta_inicio, width="stretch")
+        up_inicio = st.file_uploader(
+            t.get("ui_config_subir_logo_inicio", "Subir / importar imagen (pantalla Inicio)"),
+            type=["png", "jpg", "jpeg"],
+            key="ui_logo_inicio",
+        )
+        if up_inicio is not None and st.button(
+            t.get("ui_config_guardar_logo_inicio", "Guardar logo de Inicio"),
+            key="btn_guardar_logo_inicio",
+        ):
+            try:
+                os.makedirs(_ASSETS, exist_ok=True)
+                ruta_nueva = os.path.join(_ASSETS, "logo_inicio_custom.png")
+                with open(ruta_nueva, "wb") as f:
+                    f.write(up_inicio.getbuffer())
+                logos_cfg["inicio"] = "assets/logo_inicio_custom.png"
+                cfg["logos"] = logos_cfg
+                if guardar_ui_config(cfg):
+                    st.success(t.get("ui_config_guardado", "Diseño guardado."))
+                    st.rerun()
+            except Exception as e:
+                st.error(f"{t.get('error_guardar', 'Error al guardar.')} ({e})")
+        if st.button(t.get("ui_config_guardar_pos_ancho", "Guardar posición y ancho del logo"), key="btn_guardar_pos_ancho"):
+            logos_cfg["posicion_login"] = pos_sel
+            logos_cfg["ancho_login_px"] = int(ancho_sel)
+            cfg["logos"] = logos_cfg
+            if guardar_ui_config(cfg):
+                st.success(t.get("ui_config_guardado", "Diseño guardado."))
+                st.rerun()
+        if st.button(t.get("ui_config_restaurar_logos", "Restaurar logos por defecto"), key="btn_restaurar_logos"):
+            cfg["logos"] = {}
+            if guardar_ui_config(cfg):
+                st.success(t.get("ui_config_guardado", "Diseño guardado."))
+                st.rerun()
+
+    # ----- Textos, colores y estilos -----
+    estilos_cfg = cfg.get("estilos") or {}
+    with st.expander(t.get("ui_config_textos", "Palabras y textos editables"), expanded=False):
+        titulo_login_val = st.text_input(
+            t.get("ui_config_login_titulo", "Título de pantalla de login"),
+            value=textos_cfg.get("login_titulo", t.get("login_titulo", "")),
+            max_chars=160,
+            key="ui_login_titulo",
+        )
+        bienvenida_val = st.text_input(
+            t.get("ui_config_bienvenida", "Mensaje de bienvenida (cuando no hay opción seleccionada)"),
+            value=textos_cfg.get("bienvenida_texto", t.get("bienvenida_texto", "")),
+            max_chars=200,
+            key="ui_bienvenida",
+        )
+        color_login_val = st.color_picker(
+            t.get("ui_config_login_color", "Color del título de login"),
+            value=colores_cfg.get("login_titulo_color", "#ffffff"),
+            key="ui_login_color",
+        )
+        st.markdown(t.get("ui_config_estilo_titulo", "**Estilo del título de login:**"))
+        col_fw, col_fs = st.columns(2)
+        with col_fw:
+            font_weight_sel = st.selectbox(
+                t.get("ui_config_font_weight", "Grosor"),
+                options=["normal", "bold"],
+                index=0 if (estilos_cfg.get("login_titulo_font_weight") or "normal") == "normal" else 1,
+                format_func=lambda x: t.get("ui_config_font_normal", "Normal") if x == "normal" else t.get("ui_config_font_bold", "Negrita"),
+                key="ui_font_weight",
+            )
+        with col_fs:
+            font_size_sel = st.selectbox(
+                t.get("ui_config_font_size", "Tamaño"),
+                options=["normal", "grande"],
+                index=0 if (estilos_cfg.get("login_titulo_font_size") or "normal") == "normal" else 1,
+                format_func=lambda x: t.get("ui_config_size_normal", "Normal") if x == "normal" else t.get("ui_config_size_grande", "Grande"),
+                key="ui_font_size",
+            )
+        if st.button(t.get("ui_config_guardar_textos", "Guardar palabras, color y estilo"), key="btn_guardar_textos"):
+            try:
+                textos_cfg["login_titulo"] = titulo_login_val.strip()
+                textos_cfg["bienvenida_texto"] = bienvenida_val.strip()
+                colores_cfg["login_titulo_color"] = color_login_val.strip()
+                estilos_cfg["login_titulo_font_weight"] = font_weight_sel
+                estilos_cfg["login_titulo_font_size"] = font_size_sel
+                cfg["textos"] = textos_cfg
+                cfg["colores"] = colores_cfg
+                cfg["estilos"] = estilos_cfg
+                if guardar_ui_config(cfg):
+                    st.success(t.get("ui_config_guardado", "Diseño guardado."))
+                    st.rerun()
+            except Exception as e:
+                st.error(f"{t.get('error_guardar', 'Error al guardar.')} ({e})")
+
+    # ----- Botones visibles en menú -----
+    with st.expander(t.get("ui_config_botones", "Botones visibles en el menú"), expanded=False):
+        opciones_botones = [
+            ("inicio", t.get("inicio", "Inicio")),
+            ("arqueo_caja", t.get("arqueo_caja", "Arqueo de caja")),
+            ("tesoreria", t.get("tesoreria", "Tesorería")),
+            ("contabilidad", t.get("contabilidad", "Contabilidad")),
+            ("presupuesto_metas", t.get("presupuesto_metas", "Presupuesto y metas")),
+            ("eventos", t.get("eventos_inversiones", "Eventos / Inversiones")),
+            ("administracion", t.get("administracion", "Administración")),
+        ]
+        valores_vis = {k: bool(ocultar_cfg.get(k)) for k, _ in opciones_botones}
+        ocultos_actuales = [k for k, _ in opciones_botones if valores_vis.get(k)]
+
+        def _label_boton(k: str) -> str:
+            for _id, _lbl in opciones_botones:
+                if _id == k:
+                    return _lbl
+            return k
+
+        seleccion = st.multiselect(
+            t.get(
+                "ui_config_botones_label",
+                "Seleccione los botones que desea ocultar para todos (incluido administrador):",
+            ),
+            options=[k for k, _ in opciones_botones],
+            default=ocultos_actuales,
+            format_func=_label_boton,
+            key="ui_botones_ocultos",
+        )
+        if st.button(t.get("ui_config_guardar_botones", "Guardar visibilidad de botones"), key="btn_guardar_botones"):
+            try:
+                nuevo_ocultar = {}
+                for k, _ in opciones_botones:
+                    nuevo_ocultar[k] = k in seleccion
+                cfg["ocultar_botones"] = nuevo_ocultar
+                if guardar_ui_config(cfg):
+                    st.success(t.get("ui_config_guardado", "Diseño guardado."))
+                    st.rerun()
+            except Exception as e:
+                st.error(f"{t.get('error_guardar', 'Error al guardar.')} ({e})")
+
 def _render_pantalla_login():
     """Pantalla de login: logo centrado, título, subtítulo, idioma, usuario/contraseña, recordar sesión, mensajes claros."""
     lang = st.session_state.get("idioma", "ES")
     t = TEXTOS.get(lang, TEXTOS["ES"])
+    ui_cfg = cargar_ui_config() or {}
+    textos_cfg = ui_cfg.get("textos") or {}
+    colores_cfg = ui_cfg.get("colores") or {}
+    logos_cfg = ui_cfg.get("logos") or {}
     st.set_page_config(
         page_title="United Pentecostal Church International",
         page_icon="⛪",
@@ -461,6 +717,22 @@ def _render_pantalla_login():
     </style>
     """, unsafe_allow_html=True)
 
+    # Overrides de color para el título de login (solo si clave maestra definió un color)
+    color_titulo_cfg = (colores_cfg.get("login_titulo_color") or "").strip()
+    estilos_cfg_login = ui_cfg.get("estilos") or {}
+    reglas_extra = []
+    if color_titulo_cfg:
+        reglas_extra.append(f"color: {color_titulo_cfg} !important; text-shadow: none !important; -webkit-text-fill-color: {color_titulo_cfg} !important; background: none !important; background-clip: border-box !important;")
+    if estilos_cfg_login.get("login_titulo_font_weight") == "bold":
+        reglas_extra.append("font-weight: bold !important;")
+    if estilos_cfg_login.get("login_titulo_font_size") == "grande":
+        reglas_extra.append("font-size: 1.5rem !important;")
+    if reglas_extra:
+        st.markdown(f"<style>.login-titulo, .login-titulo-claro {{ {' '.join(reglas_extra)} }}</style>", unsafe_allow_html=True)
+    # Ancho del logo (personalización maestro)
+    ancho_logo_px = logos_cfg.get("ancho_login_px") or 580
+    st.markdown(f"<style>.login-logo-wrap img {{ max-width: {ancho_logo_px}px !important; width: {ancho_logo_px}px !important; }}</style>", unsafe_allow_html=True)
+
     if _login_bloqueado():
         st.error(t["login_bloqueado"].format(min=MINUTOS_BLOQUEO_LOGIN))
         return
@@ -471,11 +743,20 @@ def _render_pantalla_login():
         if "login_contrasena_input" not in st.session_state:
             st.session_state["login_contrasena_input"] = st.session_state.get("login_contrasena_guardada", "")
 
-    _, col_centro, _ = st.columns([1, 1, 1])
-    with col_centro:
+    posicion_logo = logos_cfg.get("posicion_login") or "centro"
+    if posicion_logo == "izquierda":
+        col_izq, col_c, col_d = st.columns([2, 1, 1])
+        col_logo = col_izq
+    elif posicion_logo == "derecha":
+        col_izq, col_c, col_d = st.columns([1, 1, 2])
+        col_logo = col_d
+    else:
+        col_izq, col_logo, col_d = st.columns([1, 1, 1])
+    with col_logo:
         st.markdown("<div class='login-logo-wrap'>", unsafe_allow_html=True)
-        if os.path.exists(LOGO_LOGIN):
-            st.image(LOGO_LOGIN, width="stretch")
+        ruta_logo_login = _resolver_ruta_logo(logos_cfg.get("login"), LOGO_LOGIN)
+        if os.path.isfile(ruta_logo_login):
+            st.image(ruta_logo_login, width="stretch")
         else:
             st.markdown("""
             <div style="width:160px;height:160px;margin:0 auto;border-radius:50%;background:linear-gradient(135deg,#1a365d,#2d3748);
@@ -486,7 +767,8 @@ def _render_pantalla_login():
         st.markdown("</div>", unsafe_allow_html=True)
 
     titulo_clase = "login-titulo login-titulo-claro" if tema == "claro" else "login-titulo"
-    st.markdown(f"<p class='{titulo_clase}'>{t['login_titulo']}</p>", unsafe_allow_html=True)
+    titulo_login = textos_cfg.get("login_titulo") or t.get("login_titulo", "")
+    st.markdown(f"<p class='{titulo_clase}'>{titulo_login}</p>", unsafe_allow_html=True)
 
     mostrar_pwd = st.session_state.get("login_mostrar_contrasena", False)
     st.checkbox("👁 " + t.get("login_mostrar_contrasena", "Ver contraseña"), value=mostrar_pwd, key="login_mostrar_contrasena")
@@ -735,10 +1017,22 @@ PERFIL_PERMISOS = {
     "pastor": ["ver_inicio", "ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad", "ver_presupuesto_metas", "ver_eventos_inversiones", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"],
     "ministerio_musica": ["ver_inicio", "ver_arqueo_caja", "ver_hoja_contable", "ver_informe_pdf"],
 }
-_ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+_BASE_APP = os.path.dirname(os.path.abspath(__file__))
+_ASSETS = os.path.join(_BASE_APP, "assets")
 # Logo metálico futurista: principal en login, inicio y sidebar
 LOGO_PRINCIPAL = os.path.join(_ASSETS, "logo_principal.png")
 LOGO_LOGIN = os.path.join(_ASSETS, "logo_principal.png")
+
+def _resolver_ruta_logo(ruta_guardada, default_path):
+    """Convierte ruta de config (absoluta o relativa) a path absoluto válido para os.path.isfile."""
+    if not ruta_guardada or not isinstance(ruta_guardada, str):
+        return default_path
+    r = (ruta_guardada or "").strip()
+    if not r:
+        return default_path
+    if os.path.isabs(r):
+        return os.path.normpath(r)
+    return os.path.normpath(os.path.join(_BASE_APP, r))
 # Imagen de inicio: logo principal (fallback: inicio_principal.png si existe)
 IMAGEN_INICIO = os.path.join(_ASSETS, "logo_principal.png")
 IMAGEN_INICIO_ES = os.path.join(_ASSETS, "logo_principal.png")
@@ -1184,6 +1478,30 @@ TEXTOS = {
         "compartir_app_instrucciones": "Puedes enviar el enlace de esta app por WhatsApp. Quien lo abra en el celular puede instalarla como una app: en Chrome/Safari, menú (⋮ o Compartir) → «Añadir a la pantalla de inicio» o «Instalar aplicación». Así se abre como app, sin barra del navegador. El enlace que debes compartir es la URL donde está publicada esta app (ej. tu servidor o Streamlit Cloud). Para que no sea pesada al abrir, la imagen de inicio se adapta al tamaño del celular; si quieres menos peso, usa una imagen de inicio comprimida o reducida en assets.",
         "login_titulo": "United Pentecostal Church International",
         "login_subtitulo": "Inicia sesión para explorar las funciones financieras y herramientas en línea.",
+        "diseno_menu": "DISEÑO (MAESTRO)",
+        "diseno_titulo": "DISEÑO / LOGOS (CLAVE MAESTRA)",
+        "diseno_sub": "Cambie logos, textos principales y visibilidad de botones. Solo para la clave maestra/universal.",
+        "diseno_seccion_logos": "Logos e imágenes",
+        "diseno_logo_actual": "Logo actual",
+        "diseno_logo_subir": "Subir nuevo logo principal (PNG/JPG)",
+        "diseno_logo_guardar": "Guardar logo",
+        "diseno_textos": "Textos principales (login)",
+        "diseno_login_titulo_es": "Título de login en Español",
+        "diseno_login_titulo_en": "Título de login en Inglés",
+        "diseno_textos_guardar": "Guardar textos",
+        "diseno_botones": "Visibilidad de botones del menú",
+        "diseno_botones_ayuda": "Marque para ocultar el botón correspondiente para todos los usuarios (incluido administrador).",
+        "diseno_ocultar_inicio": "Ocultar botón Inicio",
+        "diseno_ocultar_arqueo": "Ocultar botón Arqueo de caja",
+        "diseno_ocultar_tesoreria": "Ocultar botón Tesorería",
+        "diseno_ocultar_contabilidad": "Ocultar botón Contabilidad",
+        "diseno_ocultar_presupuesto": "Ocultar botón Presupuesto y metas",
+        "diseno_ocultar_eventos": "Ocultar botón Eventos / Inversiones",
+        "diseno_ocultar_admin": "Ocultar botón Administración",
+        "diseno_botones_guardar": "Guardar visibilidad de botones",
+        "diseno_colores": "Colores de títulos",
+        "diseno_color_login_titulo": "Color del título de login",
+        "diseno_guardado_ok": "Configuración de diseño guardada.",
         "login_usuario": "Usuario",
         "login_usuario_placeholder": "admin (primera vez: admin/admin)",
         "login_contrasena": "Contraseña",
@@ -1700,6 +2018,30 @@ TEXTOS = {
         "compartir_app_instrucciones": "You can send this app's link via WhatsApp. Whoever opens it on their phone can install it as an app: in Chrome/Safari, menu (⋮ or Share) → «Add to Home Screen» or «Install app». It will open like an app, without the browser bar. The link to share is the URL where this app is published (e.g. your server or Streamlit Cloud). To keep it light, the home image is sized for the phone; use a compressed or smaller image in assets if you want faster loading.",
         "login_titulo": "United Pentecostal Church International",
         "login_subtitulo": "Log in to explore financial functions and online tools.",
+        "diseno_menu": "DESIGN (MASTER)",
+        "diseno_titulo": "DESIGN / LOGOS (MASTER KEY)",
+        "diseno_sub": "Change logos, main texts and menu button visibility. Only for the master/universal key.",
+        "diseno_seccion_logos": "Logos and images",
+        "diseno_logo_actual": "Current logo",
+        "diseno_logo_subir": "Upload new main logo (PNG/JPG)",
+        "diseno_logo_guardar": "Save logo",
+        "diseno_textos": "Main texts (login)",
+        "diseno_login_titulo_es": "Login title in Spanish",
+        "diseno_login_titulo_en": "Login title in English",
+        "diseno_textos_guardar": "Save texts",
+        "diseno_botones": "Menu button visibility",
+        "diseno_botones_ayuda": "Check to hide the corresponding button for all users (including administrator).",
+        "diseno_ocultar_inicio": "Hide Home button",
+        "diseno_ocultar_arqueo": "Hide Cash count button",
+        "diseno_ocultar_tesoreria": "Hide Treasury button",
+        "diseno_ocultar_contabilidad": "Hide Accounting button",
+        "diseno_ocultar_presupuesto": "Hide Budget & Goals button",
+        "diseno_ocultar_eventos": "Hide Events / Investments button",
+        "diseno_ocultar_admin": "Hide Administration button",
+        "diseno_botones_guardar": "Save button visibility",
+        "diseno_colores": "Title colors",
+        "diseno_color_login_titulo": "Login title color",
+        "diseno_guardado_ok": "Design configuration saved.",
         "login_usuario": "Username",
         "login_usuario_placeholder": "admin (first time: admin/admin)",
         "login_contrasena": "Password",
@@ -3531,10 +3873,13 @@ def main():
     lista_usuarios = list(data_permisos.get("usuarios", {}).keys()) or ["admin"]
 
     with st.sidebar:
-        # Encabezado compacto
+        # Encabezado compacto (logo desde configuración maestro)
         st.markdown(f"<p class='menu-ministerio'>{t['ministerio_finanzas']}</p>", unsafe_allow_html=True)
-        if os.path.exists(LOGO_PRINCIPAL):
-            st.image(LOGO_PRINCIPAL, width="stretch")
+        ui_cfg_logo = cargar_ui_config() or {}
+        logos_sidebar = ui_cfg_logo.get("logos") or {}
+        ruta_logo_principal = _resolver_ruta_logo(logos_sidebar.get("principal"), LOGO_PRINCIPAL)
+        if os.path.isfile(ruta_logo_principal):
+            st.image(ruta_logo_principal, width="stretch")
         st.markdown("---")
         # Usuario primero (quién usa la app) — decisión principal
         st.markdown(f"<p class='menu-seccion' style='text-align:center;'>{t['usuario_actual_menu']}</p>", unsafe_allow_html=True)
@@ -3567,46 +3912,60 @@ def main():
                     st.error(t["pin_incorrecto"])
         st.markdown("---")
         # Navegación: orden por frecuencia de uso (Inicio → operaciones diarias → reportes → admin)
+        # Config maestro: qué botones del menú se ocultan para TODOS (incluido admin)
+        ui_cfg_sidebar = cargar_ui_config() or {}
+        ocultar_sidebar = ui_cfg_sidebar.get("ocultar_botones") or {}
+        def _menu_visible(clave: str) -> bool:
+            return not bool(ocultar_sidebar.get(clave))
+        es_maestro_sidebar = bool(st.session_state.get("es_acceso_maestro") or ES_PC_MAESTRO)
+
         st.markdown(f"<p class='menu-seccion' style='text-align:center;'>{t['menu_navegacion']}</p>", unsafe_allow_html=True)
-        if tiene_permiso(usuario_actual, "ver_inicio"):
+        if _menu_visible("inicio") and tiene_permiso(usuario_actual, "ver_inicio"):
             if st.button(f"🏠 {t['inicio']}", key="btn_inicio", width="stretch"):
                 st.session_state["pagina"] = "inicio"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
-        if tiene_permiso(usuario_actual, "ver_arqueo_caja"):
+        if _menu_visible("arqueo_caja") and tiene_permiso(usuario_actual, "ver_arqueo_caja"):
             if st.button(f"📋 {t['arqueo_caja']}", key="btn_arqueo", width="stretch"):
                 st.session_state["pagina"] = "arqueo_caja"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
-        if tiene_permiso(usuario_actual, "ver_tesoreria"):
+        if _menu_visible("tesoreria") and tiene_permiso(usuario_actual, "ver_tesoreria"):
             if st.button(f"📒 {t['tesoreria']}", key="btn_tesoreria", width="stretch"):
                 st.session_state["pagina"] = "tesoreria"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
-        if tiene_permiso(usuario_actual, "ver_contabilidad"):
+        if _menu_visible("contabilidad") and tiene_permiso(usuario_actual, "ver_contabilidad"):
             if st.button(f"📊 {t['contabilidad']}", key="btn_contabilidad", width="stretch"):
                 st.session_state["pagina"] = "contabilidad"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
-        if tiene_permiso(usuario_actual, "ver_presupuesto_metas"):
+        if _menu_visible("presupuesto_metas") and tiene_permiso(usuario_actual, "ver_presupuesto_metas"):
             if st.button(f"🎯 {t['presupuesto_metas']}", key="btn_presupuesto", width="stretch"):
                 st.session_state["pagina"] = "presupuesto_metas"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
-        if tiene_permiso(usuario_actual, "ver_eventos_inversiones"):
+        if _menu_visible("eventos") and tiene_permiso(usuario_actual, "ver_eventos_inversiones"):
             if st.button(f"📌 {t.get('eventos_inversiones', 'Eventos / Inversiones')}", key="btn_eventos", width="stretch"):
                 st.session_state["pagina"] = "eventos"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
-        if usuario_actual == "admin":
+        if _menu_visible("administracion") and usuario_actual == "admin":
             if st.button(f"⚙️ {t['administracion']}", key="btn_admin", width="stretch"):
                 st.session_state["pagina"] = "administracion"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
+                st.rerun()
+        # Editar (personalización): solo visible con clave maestra de sesión (contraseña universal)
+        if st.session_state.get("es_acceso_maestro"):
+            if st.button(f"✏️ {t.get('ui_config_menu', 'Editar')}", key="btn_ui_config", width="stretch"):
+                st.session_state["pagina"] = "ui_config"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
@@ -4068,9 +4427,15 @@ def main():
         return
 
     if st.session_state["pagina"] == "inicio":
-        # Logo principal en pantalla de inicio (fallback a imagen anterior si no hay logo)
-        ruta_imagen = IMAGEN_INICIO_ES if os.path.exists(IMAGEN_INICIO_ES) else (IMAGEN_INICIO_FALLBACK if os.path.exists(IMAGEN_INICIO_FALLBACK) else None)
-        if ruta_imagen:
+        # Logo de pantalla de Inicio (editable en Editar; fallback a principal o imagen por defecto)
+        ui_cfg_inicio_logo = cargar_ui_config() or {}
+        logos_inicio = ui_cfg_inicio_logo.get("logos") or {}
+        ruta_imagen = _resolver_ruta_logo(logos_inicio.get("inicio"), IMAGEN_INICIO_ES)
+        if not os.path.isfile(ruta_imagen):
+            ruta_imagen = _resolver_ruta_logo(logos_inicio.get("principal"), LOGO_PRINCIPAL)
+        if not os.path.isfile(ruta_imagen):
+            ruta_imagen = IMAGEN_INICIO_ES if os.path.isfile(IMAGEN_INICIO_ES) else (IMAGEN_INICIO_FALLBACK if os.path.isfile(IMAGEN_INICIO_FALLBACK) else None)
+        if ruta_imagen and os.path.isfile(ruta_imagen):
             st.image(ruta_imagen, width="stretch")
         # Estilo: sin bordes, imagen flotando; botones respetan tema
         st.markdown(f"""
@@ -4170,33 +4535,36 @@ def main():
                 st.rerun()
             st.markdown("---")
         # Accesos rápidos: cada oficina en su columna (Arqueo, Tesorería, Contabilidad, Presupuesto, Eventos)
+        ui_cfg_inicio = cargar_ui_config() or {}
+        ocultar_inicio = ui_cfg_inicio.get("ocultar_botones") or {}
+
         col_arqueo, col_tesoreria, col_contab, col_presup, col_eventos = st.columns(5)
         with col_arqueo:
-            if tiene_permiso(usuario_actual, "ver_arqueo_caja") and st.button(f"📋 {t['arqueo_caja']}", key="btn_ir_arqueo", width="stretch"):
+            if not ocultar_inicio.get("arqueo_caja") and tiene_permiso(usuario_actual, "ver_arqueo_caja") and st.button(f"📋 {t['arqueo_caja']}", key="btn_ir_arqueo", width="stretch"):
                 st.session_state["pagina"] = "arqueo_caja"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         with col_tesoreria:
-            if tiene_permiso(usuario_actual, "ver_tesoreria") and st.button(f"📒 {t['tesoreria']}", key="btn_ir_tesoreria", width="stretch"):
+            if not ocultar_inicio.get("tesoreria") and tiene_permiso(usuario_actual, "ver_tesoreria") and st.button(f"📒 {t['tesoreria']}", key="btn_ir_tesoreria", width="stretch"):
                 st.session_state["pagina"] = "tesoreria"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         with col_contab:
-            if tiene_permiso(usuario_actual, "ver_contabilidad") and st.button(f"📊 {t['contabilidad']}", key="btn_ir_contabilidad", width="stretch"):
+            if not ocultar_inicio.get("contabilidad") and tiene_permiso(usuario_actual, "ver_contabilidad") and st.button(f"📊 {t['contabilidad']}", key="btn_ir_contabilidad", width="stretch"):
                 st.session_state["pagina"] = "contabilidad"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         with col_presup:
-            if tiene_permiso(usuario_actual, "ver_presupuesto_metas") and st.button(f"🎯 {t['presupuesto_metas']}", key="btn_ir_presupuesto", width="stretch"):
+            if not ocultar_inicio.get("presupuesto_metas") and tiene_permiso(usuario_actual, "ver_presupuesto_metas") and st.button(f"🎯 {t['presupuesto_metas']}", key="btn_ir_presupuesto", width="stretch"):
                 st.session_state["pagina"] = "presupuesto_metas"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         with col_eventos:
-            if tiene_permiso(usuario_actual, "ver_eventos_inversiones") and st.button(f"📌 {t.get('eventos_inversiones', 'Eventos / Inversiones')}", key="btn_ir_eventos", width="stretch"):
+            if not ocultar_inicio.get("eventos") and tiene_permiso(usuario_actual, "ver_eventos_inversiones") and st.button(f"📌 {t.get('eventos_inversiones', 'Eventos / Inversiones')}", key="btn_ir_eventos", width="stretch"):
                 st.session_state["pagina"] = "eventos"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
@@ -4207,13 +4575,21 @@ def main():
             st.caption(t["compartir_app_instrucciones"])
         return
 
+    # Página de edición de diseño (solo clave maestra)
+    if st.session_state["pagina"] == "ui_config":
+        _render_ui_config_page()
+        return
+
     # ----- OFICINAS: ARQUEO, TESORERÍA, CONTABILIDAD, PRESUPUESTO -----
     pagina_act = st.session_state.get("pagina", "inicio")
     if pagina_act == "ministerio_finanzas":
         st.session_state["pagina"] = "contabilidad"
         st.rerun()
     if pagina_act not in ("arqueo_caja", "tesoreria", "contabilidad", "presupuesto_metas", "eventos"):
-        st.info(t["bienvenida_texto"])
+        ui_cfg_bienv = cargar_ui_config() or {}
+        textos_bienv = ui_cfg_bienv.get("textos") or {}
+        mensaje_bienvenida = textos_bienv.get("bienvenida_texto") or t["bienvenida_texto"]
+        st.info(mensaje_bienvenida)
         return
 
     with st.spinner(t.get("cargando", "Cargando datos...")):
