@@ -475,7 +475,7 @@ def _render_pantalla_login():
     with col_centro:
         st.markdown("<div class='login-logo-wrap'>", unsafe_allow_html=True)
         if os.path.exists(LOGO_LOGIN):
-            st.image(LOGO_LOGIN, use_container_width=True)
+            st.image(LOGO_LOGIN, width="stretch")
         else:
             st.markdown("""
             <div style="width:160px;height:160px;margin:0 auto;border-radius:50%;background:linear-gradient(135deg,#1a365d,#2d3748);
@@ -3534,7 +3534,7 @@ def main():
         # Encabezado compacto
         st.markdown(f"<p class='menu-ministerio'>{t['ministerio_finanzas']}</p>", unsafe_allow_html=True)
         if os.path.exists(LOGO_PRINCIPAL):
-            st.image(LOGO_PRINCIPAL, use_container_width=True)
+            st.image(LOGO_PRINCIPAL, width="stretch")
         st.markdown("---")
         # Usuario primero (quién usa la app) — decisión principal
         st.markdown(f"<p class='menu-seccion' style='text-align:center;'>{t['usuario_actual_menu']}</p>", unsafe_allow_html=True)
@@ -3569,43 +3569,43 @@ def main():
         # Navegación: orden por frecuencia de uso (Inicio → operaciones diarias → reportes → admin)
         st.markdown(f"<p class='menu-seccion' style='text-align:center;'>{t['menu_navegacion']}</p>", unsafe_allow_html=True)
         if tiene_permiso(usuario_actual, "ver_inicio"):
-            if st.button(f"🏠 {t['inicio']}", key="btn_inicio", use_container_width=True):
+            if st.button(f"🏠 {t['inicio']}", key="btn_inicio", width="stretch"):
                 st.session_state["pagina"] = "inicio"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         if tiene_permiso(usuario_actual, "ver_arqueo_caja"):
-            if st.button(f"📋 {t['arqueo_caja']}", key="btn_arqueo", use_container_width=True):
+            if st.button(f"📋 {t['arqueo_caja']}", key="btn_arqueo", width="stretch"):
                 st.session_state["pagina"] = "arqueo_caja"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         if tiene_permiso(usuario_actual, "ver_tesoreria"):
-            if st.button(f"📒 {t['tesoreria']}", key="btn_tesoreria", use_container_width=True):
+            if st.button(f"📒 {t['tesoreria']}", key="btn_tesoreria", width="stretch"):
                 st.session_state["pagina"] = "tesoreria"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         if tiene_permiso(usuario_actual, "ver_contabilidad"):
-            if st.button(f"📊 {t['contabilidad']}", key="btn_contabilidad", use_container_width=True):
+            if st.button(f"📊 {t['contabilidad']}", key="btn_contabilidad", width="stretch"):
                 st.session_state["pagina"] = "contabilidad"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         if tiene_permiso(usuario_actual, "ver_presupuesto_metas"):
-            if st.button(f"🎯 {t['presupuesto_metas']}", key="btn_presupuesto", use_container_width=True):
+            if st.button(f"🎯 {t['presupuesto_metas']}", key="btn_presupuesto", width="stretch"):
                 st.session_state["pagina"] = "presupuesto_metas"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         if tiene_permiso(usuario_actual, "ver_eventos_inversiones"):
-            if st.button(f"📌 {t.get('eventos_inversiones', 'Eventos / Inversiones')}", key="btn_eventos", use_container_width=True):
+            if st.button(f"📌 {t.get('eventos_inversiones', 'Eventos / Inversiones')}", key="btn_eventos", width="stretch"):
                 st.session_state["pagina"] = "eventos"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         if usuario_actual == "admin":
-            if st.button(f"⚙️ {t['administracion']}", key="btn_admin", use_container_width=True):
+            if st.button(f"⚙️ {t['administracion']}", key="btn_admin", width="stretch"):
                 st.session_state["pagina"] = "administracion"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
@@ -3616,12 +3616,12 @@ def main():
             mant_activo = _mantenimiento_activo()
             st.markdown(f"<p class='menu-seccion' style='text-align:center;'>⏸️ {t.get('mantenimiento_sidebar', 'Pausar sistema')}</p>", unsafe_allow_html=True)
             if mant_activo:
-                if st.button(f"▶️ {t.get('mantenimiento_btn_desactivar', 'Reanudar')}", key="sidebar_mant_off", use_container_width=True):
+                if st.button(f"▶️ {t.get('mantenimiento_btn_desactivar', 'Reanudar')}", key="sidebar_mant_off", width="stretch"):
                     _set_mantenimiento_activo(False)
                     audit_log(usuario_actual, "mantenimiento_desactivado", "sidebar")
                     st.rerun()
             else:
-                if st.button(f"⏸️ {t.get('mantenimiento_btn_activar', 'Pausar (mantenimiento)')}", key="sidebar_mant_on", use_container_width=True):
+                if st.button(f"⏸️ {t.get('mantenimiento_btn_activar', 'Pausar (mantenimiento)')}", key="sidebar_mant_on", width="stretch"):
                     _set_mantenimiento_activo(True)
                     audit_log(usuario_actual, "mantenimiento_activado", "sidebar")
                     st.rerun()
@@ -3651,7 +3651,7 @@ def main():
             st.rerun()
         st.markdown("---")
         # Cerrar sesión al final (zona de salida, flujo natural)
-        if st.button(f"🚪 {t['cerrar_sesion']}", key="btn_cerrar_sesion", use_container_width=True):
+        if st.button(f"🚪 {t['cerrar_sesion']}", key="btn_cerrar_sesion", width="stretch"):
             audit_log(usuario_actual, "cerrar_sesion", "")
             st.session_state["logueado"] = False
             st.session_state["admin_autorizado"] = False
@@ -3820,7 +3820,7 @@ def main():
                     with col_r2:
                         resp_licencia = st.text_input(t["admin_responsable_licencia"], value=resp.get("licencia_or_id", ""), key=f"resp_licencia_{uid}", max_chars=50, label_visibility="collapsed", placeholder=t["admin_responsable_licencia"])
                     with col_r3:
-                        btn_resp = st.button(t["admin_guardar_responsable"], key=f"btn_resp_{uid}", use_container_width=True)
+                        btn_resp = st.button(t["admin_guardar_responsable"], key=f"btn_resp_{uid}", width="stretch")
                     if btn_resp:
                         data_p = cargar_permisos()
                         if uid in data_p.get("usuarios", {}):
@@ -3902,7 +3902,7 @@ def main():
                                 st.session_state.pop(f"confirmar_eliminar_{uid}", None)
                                 st.rerun()
                     else:
-                        if st.button(t.get("admin_eliminar_usuario", "🗑️ Eliminar"), key=f"btn_eliminar_{uid}", use_container_width=True):
+                        if st.button(t.get("admin_eliminar_usuario", "🗑️ Eliminar"), key=f"btn_eliminar_{uid}", width="stretch"):
                             st.session_state[f"confirmar_eliminar_{uid}"] = True
                             st.rerun()
 
@@ -4060,7 +4060,7 @@ def main():
                             filas_tabla = []
                             for fecha_m, accion_m, detalle_m in registros:
                                 filas_tabla.append({"Fecha": fecha_m, "Acción": accion_m, "Detalle": (detalle_m or "")[:80]})
-                            st.dataframe(pd.DataFrame(filas_tabla), use_container_width=True, hide_index=True)
+                            st.dataframe(pd.DataFrame(filas_tabla), width="stretch", hide_index=True)
         st.markdown("---")
         if st.button(t["volver_inicio"]):
             st.session_state["pagina"] = "inicio"
@@ -4071,7 +4071,7 @@ def main():
         # Logo principal en pantalla de inicio (fallback a imagen anterior si no hay logo)
         ruta_imagen = IMAGEN_INICIO_ES if os.path.exists(IMAGEN_INICIO_ES) else (IMAGEN_INICIO_FALLBACK if os.path.exists(IMAGEN_INICIO_FALLBACK) else None)
         if ruta_imagen:
-            st.image(ruta_imagen, use_container_width=True)
+            st.image(ruta_imagen, width="stretch")
         # Estilo: sin bordes, imagen flotando; botones respetan tema
         st.markdown(f"""
         <style>
@@ -4147,15 +4147,15 @@ def main():
         cartel_abierto = st.session_state.get("cartel_abierto_inicio")
         c1, c2, c3 = st.columns(3)
         with c1:
-            if st.button(f"**{t['mision']}** — {t['ver_mas']}", key="btn_cartel_mision", use_container_width=True):
+            if st.button(f"**{t['mision']}** — {t['ver_mas']}", key="btn_cartel_mision", width="stretch"):
                 st.session_state["cartel_abierto_inicio"] = "mision" if cartel_abierto != "mision" else None
                 st.rerun()
         with c2:
-            if st.button(f"**{t['vision']}** — {t['ver_mas']}", key="btn_cartel_vision", use_container_width=True):
+            if st.button(f"**{t['vision']}** — {t['ver_mas']}", key="btn_cartel_vision", width="stretch"):
                 st.session_state["cartel_abierto_inicio"] = "vision" if cartel_abierto != "vision" else None
                 st.rerun()
         with c3:
-            if st.button(f"**{t['objetivo_supremo']}** — {t['ver_mas']}", key="btn_cartel_objetivo", use_container_width=True):
+            if st.button(f"**{t['objetivo_supremo']}** — {t['ver_mas']}", key="btn_cartel_objetivo", width="stretch"):
                 st.session_state["cartel_abierto_inicio"] = "objetivo" if cartel_abierto != "objetivo" else None
                 st.rerun()
         # Panel desplegable: texto de Misión, Visión u Objetivo
@@ -4172,31 +4172,31 @@ def main():
         # Accesos rápidos: cada oficina en su columna (Arqueo, Tesorería, Contabilidad, Presupuesto, Eventos)
         col_arqueo, col_tesoreria, col_contab, col_presup, col_eventos = st.columns(5)
         with col_arqueo:
-            if tiene_permiso(usuario_actual, "ver_arqueo_caja") and st.button(f"📋 {t['arqueo_caja']}", key="btn_ir_arqueo", use_container_width=True):
+            if tiene_permiso(usuario_actual, "ver_arqueo_caja") and st.button(f"📋 {t['arqueo_caja']}", key="btn_ir_arqueo", width="stretch"):
                 st.session_state["pagina"] = "arqueo_caja"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         with col_tesoreria:
-            if tiene_permiso(usuario_actual, "ver_tesoreria") and st.button(f"📒 {t['tesoreria']}", key="btn_ir_tesoreria", use_container_width=True):
+            if tiene_permiso(usuario_actual, "ver_tesoreria") and st.button(f"📒 {t['tesoreria']}", key="btn_ir_tesoreria", width="stretch"):
                 st.session_state["pagina"] = "tesoreria"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         with col_contab:
-            if tiene_permiso(usuario_actual, "ver_contabilidad") and st.button(f"📊 {t['contabilidad']}", key="btn_ir_contabilidad", use_container_width=True):
+            if tiene_permiso(usuario_actual, "ver_contabilidad") and st.button(f"📊 {t['contabilidad']}", key="btn_ir_contabilidad", width="stretch"):
                 st.session_state["pagina"] = "contabilidad"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         with col_presup:
-            if tiene_permiso(usuario_actual, "ver_presupuesto_metas") and st.button(f"🎯 {t['presupuesto_metas']}", key="btn_ir_presupuesto", use_container_width=True):
+            if tiene_permiso(usuario_actual, "ver_presupuesto_metas") and st.button(f"🎯 {t['presupuesto_metas']}", key="btn_ir_presupuesto", width="stretch"):
                 st.session_state["pagina"] = "presupuesto_metas"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         with col_eventos:
-            if tiene_permiso(usuario_actual, "ver_eventos_inversiones") and st.button(f"📌 {t.get('eventos_inversiones', 'Eventos / Inversiones')}", key="btn_ir_eventos", use_container_width=True):
+            if tiene_permiso(usuario_actual, "ver_eventos_inversiones") and st.button(f"📌 {t.get('eventos_inversiones', 'Eventos / Inversiones')}", key="btn_ir_eventos", width="stretch"):
                 st.session_state["pagina"] = "eventos"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
@@ -4295,7 +4295,7 @@ def main():
                     cols_c = st.columns(min(6, len(nombres_contado) + 1))[:6]
                     for i, nom in enumerate(nombres_contado[:5]):
                         with cols_c[i]:
-                            if st.button(nom, key=f"contado_sug_{i}", use_container_width=True):
+                            if st.button(nom, key=f"contado_sug_{i}", width="stretch"):
                                 st.session_state["contado_por_arqueo"] = nom
                                 st.rerun()
                 contado_por = (contado_por_raw or "").strip().upper()
@@ -4315,7 +4315,7 @@ def main():
                     cols_v = st.columns(min(6, len(nombres_verificado) + 1))[:6]
                     for i, nom in enumerate(nombres_verificado[:5]):
                         with cols_v[i]:
-                            if st.button(nom, key=f"verificado_sug_{i}", use_container_width=True):
+                            if st.button(nom, key=f"verificado_sug_{i}", width="stretch"):
                                 st.session_state["verificado_por_arqueo"] = nom
                                 st.rerun()
                 verificado_por = (verificado_por_raw or "").strip().upper()
@@ -4705,7 +4705,7 @@ def main():
                         enviado = st.form_submit_button(t["registrar"])
                 col_btn_reg, col_btn_sp, col_btn_ref = st.columns([1, 2, 1])
                 with col_btn_ref:
-                    if st.button(t.get("gasto_refrescar", "Refrescar"), key="btn_refrescar_gasto", help=t.get("gasto_refrescar_ayuda", ""), use_container_width=True):
+                    if st.button(t.get("gasto_refrescar", "Refrescar"), key="btn_refrescar_gasto", help=t.get("gasto_refrescar_ayuda", ""), width="stretch"):
                         st.session_state["limpiar_gasto"] = True
                         st.rerun()
                 if not modo_rapido:
@@ -4728,7 +4728,7 @@ def main():
                         cols_ap = st.columns(min(6, len(nombres_aprobado) + 1))[:6]
                         for i, nom in enumerate(nombres_aprobado[:5]):
                             with cols_ap[i]:
-                                if st.button(nom, key=f"aprobado_sug_{i}", use_container_width=True):
+                                if st.button(nom, key=f"aprobado_sug_{i}", width="stretch"):
                                     st.session_state["aprobado_por_g"] = nom
                                     st.rerun()
                     aprobado_por_gasto = (aprobado_por_raw or "").strip().upper()
@@ -4775,7 +4775,7 @@ def main():
                         for idx_f, fup in enumerate(foto_subidas):
                             lbl = (t.get("foto_frente", "Frente"), t.get("foto_reverso", "Reverso"), t.get("foto_anexo", "Anexo"))[min(idx_f, 2)] if idx_f < 3 else f"#{idx_f + 1}"
                             st.caption(lbl if len(foto_subidas) > 1 else "")
-                            st.image(fup.getvalue(), use_container_width=True)
+                            st.image(fup.getvalue(), width="stretch")
                         if datos_show.get("total") is not None:
                             st.markdown(f"**{t['total_detectado']}:** ${datos_show['total']:.2f}")
                         if datos_show.get("impuesto") is not None:
@@ -5108,7 +5108,7 @@ def main():
                     real=df_tabla["real"].apply(lambda x: f"${x:,.2f}"),
                     pct=df_tabla["pct"].apply(lambda x: f"{x:.1f}%" if x > 0 else "—"),
                 )[["estado", "tipo", "presupuesto", "real", "pct"]],
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
             for r in filas:
                 if r["pct"] > 100:
@@ -5550,7 +5550,7 @@ def main():
                 )
                 fig.update_xaxes(showgrid=True, gridwidth=1.5, gridcolor=grid_color, zerolinewidth=1)
                 fig.update_yaxes(showgrid=True, gridwidth=1.5, gridcolor=grid_color, zerolinewidth=1)
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True, "displaylogo": False, "scrollZoom": True})
+                st.plotly_chart(fig, width="stretch", config={"displayModeBar": True, "displaylogo": False, "scrollZoom": True})
                 st.caption(f"🟢 {t['grafico_alza']}  ·  🔴 {t['grafico_baja']} — {t['grafico_trazabilidad']}")
 
                 # Gráfico gastos por tipo en el tiempo (barras apiladas por mes)
@@ -5575,7 +5575,7 @@ def main():
                                 yaxis=dict(title="$", tickfont=dict(color=font_color), gridcolor=grid_color),
                                 legend=dict(orientation="h", yanchor="bottom", font=dict(color=font_color)),
                             )
-                            st.plotly_chart(fig_gt, use_container_width=True, config={"displayModeBar": True, "displaylogo": False})
+                            st.plotly_chart(fig_gt, width="stretch", config={"displayModeBar": True, "displaylogo": False})
                     except Exception:
                         pass
 
@@ -5602,7 +5602,7 @@ def main():
                                               paper_bgcolor=paper_bg, plot_bgcolor=plot_bg, font=dict(color=font_color),
                                               margin=dict(t=50, b=40), xaxis=dict(gridcolor=grid_color, gridwidth=1.5),
                                               yaxis=dict(gridcolor=grid_color, gridwidth=1.5, tickformat="$,.0f"))
-                            st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+                            st.plotly_chart(fig2, width="stretch", config={"displayModeBar": False})
             else:
                 es_maestro_else = st.session_state.get("es_acceso_maestro") and usuario_actual == "admin"
                 if es_maestro_else:
@@ -5614,7 +5614,7 @@ def main():
                         chart_data = [{"mes": m, "Ingresos": float(df_dash[df_dash["_mes"] == m]["ingreso"].sum()), "Gastos": float(df_dash[df_dash["_mes"] == m]["gastos"].sum())} for m in ultimos_meses]
                         if chart_data:
                             df_chart = pd.DataFrame(chart_data).set_index("mes")
-                            st.bar_chart(df_chart[["Ingresos", "Gastos"]], use_container_width=True)
+                            st.bar_chart(df_chart[["Ingresos", "Gastos"]], width="stretch")
         except Exception:
             pass
         with st.expander(f"📋 {t['conciliar']}", expanded=False):
@@ -5864,7 +5864,7 @@ def main():
                 inicio = pag_actual * REGISTROS_POR_PAGINA
                 fin = min(inicio + REGISTROS_POR_PAGINA, total)
                 display_pag = display_df.iloc[inicio:fin]
-                st.dataframe(display_pag, use_container_width=True, hide_index=True)
+                st.dataframe(display_pag, width="stretch", hide_index=True)
                 if n_pag > 1:
                     col_prev, col_info, col_next = st.columns([1, 2, 1])
                     with col_prev:
