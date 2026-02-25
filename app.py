@@ -306,6 +306,8 @@ def _render_pantalla_login():
     header[data-testid="stHeader"] {{ display: none !important; }}
     [data-testid="stToolbar"], [data-testid="stStatusWidget"], [data-testid="stDeployButton"] {{ display: none !important; }}
     a[href*="streamlit.io"], img[alt*="Streamlit"], [data-testid="stToolbar"] img {{ display: none !important; }}
+    /* Ocultar cuadro/hint "Press Enter to submit form" */
+    [data-testid="stFormSubmitButton"] + div, .stApp form [data-testid="stFormSubmitButton"] ~ div[style*="font-size"] {{ display: none !important; }}
     #MainMenu, footer {{ visibility: hidden !important; }}
     .stApp, [data-testid="stAppViewContainer"], .main, .block-container {{
         background: {bg} !important;
@@ -445,7 +447,7 @@ def _render_pantalla_login():
     st.checkbox("👁 " + t.get("login_mostrar_contrasena", "Ver contraseña"), value=mostrar_pwd, key="login_mostrar_contrasena")
     # Streamlit solo acepta type "default" o "password" (nunca "text")
     _pwd_input_type = "default" if mostrar_pwd else "password"
-    with st.form("form_login", clear_on_submit=False):
+    with st.form("form_login", clear_on_submit=False, enter_to_submit=False):
         usuario = st.text_input(t["login_usuario"], key="login_usuario_input", placeholder=t.get("login_usuario_placeholder", "admin"),
                                 label_visibility="visible")
         contrasena = st.text_input(
@@ -2738,12 +2740,13 @@ def main():
     </script>
     """, unsafe_allow_html=True)
 
-    # Ocultar logo de Streamlit y botón Deploy para todos los usuarios
+    # Ocultar logo de Streamlit, botón Deploy y hint "Press Enter to submit form"
     st.markdown("""
     <style>
     a[href*="streamlit.io"], a[href*="streamlit.io"] img,
     [data-testid="stDeployButton"], [data-testid="stToolbar"] a, [data-testid="stToolbar"] img,
     header a[href*="streamlit"], header img[alt*="Streamlit"] { display: none !important; visibility: hidden !important; }
+    [data-testid="stFormSubmitButton"] + div { display: none !important; }
     </style>
     """, unsafe_allow_html=True)
     # Ocultar iconos de desarrollador (toolbar, menú, Host, etc.) para todos excepto clave universal
