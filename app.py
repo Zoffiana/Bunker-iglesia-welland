@@ -303,7 +303,9 @@ def _render_pantalla_login():
     <style>
     [data-testid="stSidebar"] {{ display: none !important; }}
     .stApp > header {{ display: none !important; }}
+    header[data-testid="stHeader"] {{ display: none !important; }}
     [data-testid="stToolbar"], [data-testid="stStatusWidget"], [data-testid="stDeployButton"] {{ display: none !important; }}
+    a[href*="streamlit.io"], img[alt*="Streamlit"], [data-testid="stToolbar"] img {{ display: none !important; }}
     #MainMenu, footer {{ visibility: hidden !important; }}
     .stApp, [data-testid="stAppViewContainer"], .main, .block-container {{
         background: {bg} !important;
@@ -2736,6 +2738,14 @@ def main():
     </script>
     """, unsafe_allow_html=True)
 
+    # Ocultar logo de Streamlit y botón Deploy para todos los usuarios
+    st.markdown("""
+    <style>
+    a[href*="streamlit.io"], a[href*="streamlit.io"] img,
+    [data-testid="stDeployButton"], [data-testid="stToolbar"] a, [data-testid="stToolbar"] img,
+    header a[href*="streamlit"], header img[alt*="Streamlit"] { display: none !important; visibility: hidden !important; }
+    </style>
+    """, unsafe_allow_html=True)
     # Ocultar iconos de desarrollador (toolbar, menú, Host, etc.) para todos excepto clave universal
     # IMPORTANTE: cuando el sidebar está colapsado, NO ocultar el botón de expandir (flechita/hamburguesa)
     es_maestro = st.session_state.get("es_acceso_maestro", False)
