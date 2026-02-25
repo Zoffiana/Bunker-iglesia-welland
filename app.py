@@ -365,24 +365,44 @@ def _render_ui_config_page():
     ocultar_cfg = cfg.get("ocultar_botones") or {}
     logos_cfg = cfg.get("logos") or {}
 
-    # ----- Logos: subir/importar, posición, ancho, restaurar -----
+    # ----- Logos: subir/importar, posición por logo, ancho, restaurar -----
+    def _opciones_pos():
+        return ["centro", "izquierda", "derecha"]
+    def _label_pos(x):
+        return {"centro": t.get("ui_config_pos_centro", "Centro"), "izquierda": t.get("ui_config_pos_izq", "Izquierda"), "derecha": t.get("ui_config_pos_der", "Derecha")}.get(x, x)
+    _opciones_pct = [25, 50, 75, 100]
+    def _label_pct(x):
+        return f"{x}%"
     with st.expander(t.get("ui_config_logos", "Logos e imágenes"), expanded=True):
         posicion_login = logos_cfg.get("posicion_login") or "centro"
-        ancho_login_px = logos_cfg.get("ancho_login_px") or 580
-        col_pos, col_ancho = st.columns(2)
-        with col_pos:
-            pos_sel = st.selectbox(
-                t.get("ui_config_logo_posicion", "Posición del logo en login"),
-                options=["centro", "izquierda", "derecha"],
-                index=["centro", "izquierda", "derecha"].index(posicion_login) if posicion_login in ("centro", "izquierda", "derecha") else 0,
-                format_func=lambda x: {"centro": t.get("ui_config_pos_centro", "Centro"), "izquierda": t.get("ui_config_pos_izq", "Izquierda"), "derecha": t.get("ui_config_pos_der", "Derecha")}.get(x, x),
-                key="ui_logo_posicion",
-            )
-        with col_ancho:
-            ancho_sel = st.number_input(t.get("ui_config_logo_ancho", "Ancho del logo (px)"), min_value=120, max_value=800, value=int(ancho_login_px), step=20, key="ui_logo_ancho")
+        posicion_principal = logos_cfg.get("posicion_principal") or "centro"
+        posicion_inicio = logos_cfg.get("posicion_inicio") or "centro"
+        login_ancho_pct = logos_cfg.get("login_ancho_pct")
+        if login_ancho_pct not in _opciones_pct:
+            login_ancho_pct = 100
+        principal_ancho_pct = logos_cfg.get("principal_ancho_pct")
+        if principal_ancho_pct not in _opciones_pct:
+            principal_ancho_pct = 100
+        inicio_ancho_pct = logos_cfg.get("inicio_ancho_pct")
+        if inicio_ancho_pct not in _opciones_pct:
+            inicio_ancho_pct = 100
         col1, col2 = st.columns(2)
         with col1:
             st.markdown(f"**{t.get('ui_config_logo_login', 'Logo de pantalla de inicio de sesión')}**")
+            pos_sel = st.selectbox(
+                t.get("ui_config_logo_posicion_login", "Posición del logo (login)"),
+                options=_opciones_pos(),
+                index=_opciones_pos().index(posicion_login) if posicion_login in _opciones_pos() else 0,
+                format_func=_label_pos,
+                key="ui_logo_posicion",
+            )
+            login_pct_sel = st.selectbox(
+                t.get("ui_config_ancho_pct", "Ancho (% de pantalla)"),
+                options=_opciones_pct,
+                index=_opciones_pct.index(login_ancho_pct),
+                format_func=_label_pct,
+                key="ui_logo_ancho_pct_login",
+            )
             ruta_login = _resolver_ruta_logo(logos_cfg.get("login"), LOGO_LOGIN)
             if os.path.isfile(ruta_login):
                 st.image(ruta_login, width="stretch")
@@ -402,7 +422,7 @@ def _render_ui_config_page():
                         f.write(up_login.getbuffer())
                     logos_cfg["login"] = "assets/logo_login_custom.png"
                     logos_cfg["posicion_login"] = pos_sel
-                    logos_cfg["ancho_login_px"] = int(ancho_sel)
+                    logos_cfg["login_ancho_pct"] = login_pct_sel
                     cfg["logos"] = logos_cfg
                     if guardar_ui_config(cfg):
                         st.success(t.get("ui_config_guardado", "Diseño guardado."))
@@ -411,6 +431,20 @@ def _render_ui_config_page():
                     st.error(f"{t.get('error_guardar', 'Error al guardar.')} ({e})")
         with col2:
             st.markdown(f"**{t.get('ui_config_logo_principal', 'Logo lateral / principal')}**")
+            pos_principal_sel = st.selectbox(
+                t.get("ui_config_posicion_principal", "Posición del logo lateral/principal"),
+                options=_opciones_pos(),
+                index=_opciones_pos().index(posicion_principal) if posicion_principal in _opciones_pos() else 0,
+                format_func=_label_pos,
+                key="ui_logo_posicion_principal",
+            )
+            principal_pct_sel = st.selectbox(
+                t.get("ui_config_ancho_pct_principal", "Ancho (% de pantalla)"),
+                options=_opciones_pct,
+                index=_opciones_pct.index(principal_ancho_pct),
+                format_func=_label_pct,
+                key="ui_logo_ancho_pct_principal",
+            )
             ruta_principal = _resolver_ruta_logo(logos_cfg.get("principal"), LOGO_PRINCIPAL)
             if os.path.isfile(ruta_principal):
                 st.image(ruta_principal, width="stretch")
@@ -430,7 +464,9 @@ def _render_ui_config_page():
                         f.write(up_principal.getbuffer())
                     logos_cfg["principal"] = "assets/logo_principal_custom.png"
                     logos_cfg["posicion_login"] = pos_sel
-                    logos_cfg["ancho_login_px"] = int(ancho_sel)
+                    logos_cfg["posicion_principal"] = pos_principal_sel
+                    logos_cfg["login_ancho_pct"] = login_pct_sel
+                    logos_cfg["principal_ancho_pct"] = principal_pct_sel
                     cfg["logos"] = logos_cfg
                     if guardar_ui_config(cfg):
                         st.success(t.get("ui_config_guardado", "Diseño guardado."))
@@ -438,6 +474,20 @@ def _render_ui_config_page():
                 except Exception as e:
                     st.error(f"{t.get('error_guardar', 'Error al guardar.')} ({e})")
         st.markdown(f"**{t.get('ui_config_logo_inicio', 'Logo de pantalla de Inicio')}**")
+        pos_inicio_sel = st.selectbox(
+            t.get("ui_config_posicion_inicio", "Posición del logo (pantalla de Inicio)"),
+            options=_opciones_pos(),
+            index=_opciones_pos().index(posicion_inicio) if posicion_inicio in _opciones_pos() else 0,
+            format_func=_label_pos,
+            key="ui_logo_posicion_inicio",
+        )
+        inicio_pct_sel = st.selectbox(
+            t.get("ui_config_ancho_pct_inicio", "Ancho (% de pantalla)"),
+            options=_opciones_pct,
+            index=_opciones_pct.index(inicio_ancho_pct),
+            format_func=_label_pct,
+            key="ui_logo_ancho_pct_inicio",
+        )
         ruta_inicio = _resolver_ruta_logo(logos_cfg.get("inicio"), IMAGEN_INICIO)
         if os.path.isfile(ruta_inicio):
             st.image(ruta_inicio, width="stretch")
@@ -456,15 +506,21 @@ def _render_ui_config_page():
                 with open(ruta_nueva, "wb") as f:
                     f.write(up_inicio.getbuffer())
                 logos_cfg["inicio"] = "assets/logo_inicio_custom.png"
+                logos_cfg["posicion_inicio"] = pos_inicio_sel
+                logos_cfg["inicio_ancho_pct"] = inicio_pct_sel
                 cfg["logos"] = logos_cfg
                 if guardar_ui_config(cfg):
                     st.success(t.get("ui_config_guardado", "Diseño guardado."))
                     st.rerun()
             except Exception as e:
                 st.error(f"{t.get('error_guardar', 'Error al guardar.')} ({e})")
-        if st.button(t.get("ui_config_guardar_pos_ancho", "Guardar posición y ancho del logo"), key="btn_guardar_pos_ancho"):
+        if st.button(t.get("ui_config_guardar_pos_ancho", "Guardar posiciones y porcentajes de logos"), key="btn_guardar_pos_ancho"):
             logos_cfg["posicion_login"] = pos_sel
-            logos_cfg["ancho_login_px"] = int(ancho_sel)
+            logos_cfg["posicion_principal"] = pos_principal_sel
+            logos_cfg["posicion_inicio"] = pos_inicio_sel
+            logos_cfg["login_ancho_pct"] = login_pct_sel
+            logos_cfg["principal_ancho_pct"] = principal_pct_sel
+            logos_cfg["inicio_ancho_pct"] = inicio_pct_sel
             cfg["logos"] = logos_cfg
             if guardar_ui_config(cfg):
                 st.success(t.get("ui_config_guardado", "Diseño guardado."))
@@ -734,8 +790,10 @@ def _render_pantalla_login():
     if reglas_extra:
         st.markdown(f"<style>.login-titulo, .login-titulo-claro {{ {' '.join(reglas_extra)} }}</style>", unsafe_allow_html=True)
     # Ancho del logo (personalización maestro)
-    ancho_logo_px = logos_cfg.get("ancho_login_px") or 580
-    st.markdown(f"<style>.login-logo-wrap img {{ max-width: {ancho_logo_px}px !important; width: {ancho_logo_px}px !important; }}</style>", unsafe_allow_html=True)
+    login_pct = logos_cfg.get("login_ancho_pct")
+    if login_pct not in (25, 50, 75, 100):
+        login_pct = 100
+    st.markdown(f"<style>.login-logo-wrap img {{ max-width: {login_pct}% !important; width: {login_pct}% !important; height: auto !important; }}</style>", unsafe_allow_html=True)
 
     if _login_bloqueado():
         st.error(t["login_bloqueado"].format(min=MINUTOS_BLOQUEO_LOGIN))
@@ -3877,13 +3935,29 @@ def main():
     lista_usuarios = list(data_permisos.get("usuarios", {}).keys()) or ["admin"]
 
     with st.sidebar:
-        # Encabezado compacto (logo desde configuración maestro)
+        # Encabezado compacto (logo desde configuración maestro; posición editable)
         st.markdown(f"<p class='menu-ministerio'>{t['ministerio_finanzas']}</p>", unsafe_allow_html=True)
         ui_cfg_logo = cargar_ui_config() or {}
         logos_sidebar = ui_cfg_logo.get("logos") or {}
+        pos_principal = logos_sidebar.get("posicion_principal") or "centro"
+        principal_pct = logos_sidebar.get("principal_ancho_pct")
+        if principal_pct not in (25, 50, 75, 100):
+            principal_pct = 100
+        st.markdown(f"<style>[data-testid=\"stSidebar\"] div[data-testid=\"stImage\"] img {{ max-width: {principal_pct}% !important; width: {principal_pct}% !important; height: auto !important; }}</style>", unsafe_allow_html=True)
         ruta_logo_principal = _resolver_ruta_logo(logos_sidebar.get("principal"), LOGO_PRINCIPAL)
         if os.path.isfile(ruta_logo_principal):
-            st.image(ruta_logo_principal, width="stretch")
+            if pos_principal == "izquierda":
+                c1, c2, c3 = st.columns([2, 1, 1])
+                with c1:
+                    st.image(ruta_logo_principal, width="stretch")
+            elif pos_principal == "derecha":
+                c1, c2, c3 = st.columns([1, 1, 2])
+                with c3:
+                    st.image(ruta_logo_principal, width="stretch")
+            else:
+                c1, c2, c3 = st.columns([1, 2, 1])
+                with c2:
+                    st.image(ruta_logo_principal, width="stretch")
         st.markdown("---")
         # Usuario primero (quién usa la app) — decisión principal
         st.markdown(f"<p class='menu-seccion' style='text-align:center;'>{t['usuario_actual_menu']}</p>", unsafe_allow_html=True)
@@ -4431,16 +4505,35 @@ def main():
         return
 
     if st.session_state["pagina"] == "inicio":
-        # Logo de pantalla de Inicio (editable en Editar; fallback a principal o imagen por defecto)
+        # Logo de pantalla de Inicio (editable en Editar; posición y % de pantalla)
         ui_cfg_inicio_logo = cargar_ui_config() or {}
         logos_inicio = ui_cfg_inicio_logo.get("logos") or {}
+        pos_inicio = logos_inicio.get("posicion_inicio") or "centro"
+        inicio_pct = logos_inicio.get("inicio_ancho_pct")
+        if inicio_pct not in (25, 50, 75, 100):
+            inicio_pct = 100
         ruta_imagen = _resolver_ruta_logo(logos_inicio.get("inicio"), IMAGEN_INICIO_ES)
         if not os.path.isfile(ruta_imagen):
             ruta_imagen = _resolver_ruta_logo(logos_inicio.get("principal"), LOGO_PRINCIPAL)
         if not os.path.isfile(ruta_imagen):
             ruta_imagen = IMAGEN_INICIO_ES if os.path.isfile(IMAGEN_INICIO_ES) else (IMAGEN_INICIO_FALLBACK if os.path.isfile(IMAGEN_INICIO_FALLBACK) else None)
         if ruta_imagen and os.path.isfile(ruta_imagen):
-            st.image(ruta_imagen, width="stretch")
+            st.markdown(
+                f"<style>.main .block-container div[data-testid=\"stImage\"] img {{ max-width: {inicio_pct}% !important; width: {inicio_pct}% !important; height: auto !important; object-fit: contain !important; }}</style>",
+                unsafe_allow_html=True,
+            )
+            if pos_inicio == "izquierda":
+                col_izq, col_c, col_d = st.columns([2, 1, 1])
+                with col_izq:
+                    st.image(ruta_imagen, width="stretch")
+            elif pos_inicio == "derecha":
+                col_izq, col_c, col_d = st.columns([1, 1, 2])
+                with col_d:
+                    st.image(ruta_imagen, width="stretch")
+            else:
+                col_izq, col_logo, col_d = st.columns([1, 1, 1])
+                with col_logo:
+                    st.image(ruta_imagen, width="stretch")
         # Estilo: sin bordes, imagen flotando; botones respetan tema
         st.markdown(f"""
         <style>

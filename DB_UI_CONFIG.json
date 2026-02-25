@@ -11,8 +11,15 @@
     "login": "assets/logo_login_custom.png",
     "principal": "assets/logo_principal_custom.png",
     "posicion_login": "centro",
-    "ancho_login_px": 580,
-    "inicio": "assets/logo_inicio_custom.png"
+    "ancho_login_px": 700,
+    "inicio": "assets/logo_inicio_custom.png",
+    "posicion_principal": "centro",
+    "posicion_inicio": "centro",
+    "ancho_inicio_px": 1000,
+    "inicio_ancho_completo": true,
+    "login_ancho_pct": 100,
+    "principal_ancho_pct": 100,
+    "inicio_ancho_pct": 75
   },
   "estilos": {
     "login_titulo_font_weight": "normal",
