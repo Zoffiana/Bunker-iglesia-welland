@@ -6,7 +6,7 @@ Aplicación ultra-didáctica para adultos mayores.
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 
 try:
     import plotly.graph_objects as go
@@ -40,6 +40,7 @@ from config import (
     CONFIRMACION_REINICIO, CONFIRMACION_LIMPIAR_TODO, UMBRAL_GASTO_APROBACION, PIN_ADMIN_ENV,
     ES_PC_MAESTRO, DIRECCION_IGLESIA, PASSWORD_MAESTRO_UNIVERSAL,
     MIN_LONGITUD_CONTRASENA, REQUIERE_MAYUSCULA, REQUIERE_NUMERO, REQUIERE_SIMBOLO, REGISTROS_POR_PAGINA,
+    MANTENIMIENTO_ACTIVO,
 )
 
 # ============== AUDITORÍA Y SEGURIDAD ==============
@@ -54,6 +55,44 @@ def audit_log(usuario, accion, detalle=""):
         logging.getLogger("tesoreria").info(f"AUDIT | {usuario} | {accion} | {detalle}")
     except Exception:
         pass
+
+def _leer_log_auditoria(limite=500):
+    """Lee las últimas líneas del log de auditoría. Devuelve lista de (fecha, usuario, accion, detalle)."""
+    if not os.path.exists(AUDIT_LOG):
+        return []
+    try:
+        with open(AUDIT_LOG, "r", encoding="utf-8") as f:
+            lineas = f.readlines()
+    except Exception:
+        return []
+    out = []
+    for linea in lineas[-limite:]:
+        linea = (linea or "").strip()
+        if not linea:
+            continue
+        partes = linea.split("\t", 3)
+        if len(partes) >= 3:
+            out.append((partes[0], partes[1], partes[2], partes[3] if len(partes) > 3 else ""))
+    return out
+
+def movimientos_por_usuario(limite_por_usuario=50):
+    """Agrupa movimientos del log por usuario. Solo para clave maestra. Devuelve dict usuario -> [(fecha, accion, detalle), ...]."""
+    entradas = _leer_log_auditoria(limite=2000)
+    por_usuario = {}
+    for fecha, usuario, accion, detalle in reversed(entradas):
+        if usuario not in por_usuario:
+            por_usuario[usuario] = []
+        if len(por_usuario[usuario]) < limite_por_usuario:
+            por_usuario[usuario].append((fecha, accion, detalle))
+    return por_usuario
+
+def ultima_actividad_usuario(usuario_id):
+    """Devuelve (fecha, accion) de la última actividad de ese usuario en el log, o (None, None)."""
+    entradas = _leer_log_auditoria(limite=1000)
+    for fecha, usuario, accion, _ in reversed(entradas):
+        if usuario == usuario_id:
+            return (fecha, accion)
+    return (None, None)
 
 def _hash_pin(pin):
     """Hash simple del PIN para comparación (no usar para seguridad crítica sin salt)."""
@@ -211,12 +250,32 @@ def _ultima_actividad_audit():
         pass
     return None
 
+def _mantenimiento_activo():
+    """True si el administrador activó el modo mantenimiento (pausa del sistema)."""
+    try:
+        if os.path.exists(MANTENIMIENTO_ACTIVO):
+            with open(MANTENIMIENTO_ACTIVO, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            return bool(d.get("activo", False))
+    except Exception:
+        pass
+    return False
+
+def _set_mantenimiento_activo(activo):
+    """Activa o desactiva el modo mantenimiento (solo admin)."""
+    try:
+        with open(MANTENIMIENTO_ACTIVO, "w", encoding="utf-8") as f:
+            json.dump({"activo": bool(activo)}, f, indent=2)
+        return True
+    except Exception:
+        return False
+
 def _render_pantalla_login():
     """Pantalla de login: logo centrado, título, subtítulo, idioma, usuario/contraseña, recordar sesión, mensajes claros."""
     lang = st.session_state.get("idioma", "ES")
     t = TEXTOS.get(lang, TEXTOS["ES"])
     st.set_page_config(
-        page_title="Iglesia Pentecostal de Welland",
+        page_title="United Pentecostal Church International",
         page_icon="⛪",
         layout="centered",
         initial_sidebar_state="collapsed"
@@ -229,8 +288,8 @@ def _render_pantalla_login():
         input_bg_login = "rgba(255,255,255,0.95)"
         input_color_login = "#1a365d"
         dashboard_bg_login = "rgba(0,0,0,0.06)"
-        btn_bg_login = "rgba(26,54,93,0.35)"
         border_login = "rgba(26,54,93,0.5)"
+        form_bg_login = "rgba(255,255,255,0.4)"
     else:
         bg = "#000000"
         txt = "#FFFFFF"
@@ -238,37 +297,54 @@ def _render_pantalla_login():
         input_bg_login = "rgba(30,40,55,0.6)"
         input_color_login = "#FFFFFF"
         dashboard_bg_login = "rgba(255,255,255,0.06)"
-        btn_bg_login = "rgba(255,255,255,0.12)"
         border_login = "rgba(0,0,0,0.7)"
+        form_bg_login = "rgba(0,0,0,0.35)"
     st.markdown(f"""
     <style>
     [data-testid="stSidebar"] {{ display: none !important; }}
     .stApp > header {{ display: none !important; }}
+    [data-testid="stToolbar"], [data-testid="stStatusWidget"], [data-testid="stDeployButton"] {{ display: none !important; }}
+    #MainMenu, footer {{ visibility: hidden !important; }}
     .stApp, [data-testid="stAppViewContainer"], .main, .block-container {{
         background: {bg} !important;
         padding: 2rem 1rem !important;
-        max-width: 520px !important;
+        max-width: 620px !important;
         margin: 0 auto !important;
     }}
     .login-titulo {{
         font-family: Calibri, 'Segoe UI', sans-serif;
-        font-size: 1.6rem;
+        font-size: 1.25rem;
         font-weight: bold;
-        color: {txt};
-        margin: 1rem 0 0.4rem 0;
+        margin: 1rem auto 0.4rem auto;
         text-align: center;
-    }}
-    .login-subtitulo {{
-        font-family: Calibri, 'Segoe UI', sans-serif;
-        font-size: 0.9rem;
-        color: {txt2};
-        margin-bottom: 1rem;
+        max-width: 100%;
+        width: 100%;
+        margin-left: auto;
+        margin-right: auto;
         line-height: 1.4;
-        text-align: center;
+        color: #f8fafc;
+        text-shadow: 0 0 1px rgba(255,255,255,0.9), 0 2px 4px rgba(0,0,0,0.4),
+                     0 -1px 2px rgba(255,255,255,0.3), 1px 1px 2px rgba(200,210,220,0.5);
+        background: linear-gradient(180deg, #ffffff 0%, #e8eef4 20%, #c8d0dc 45%, #a8b0bc 50%, #c8d0dc 55%, #e0e8f0 80%, #f5f8fc 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        letter-spacing: 0.02em;
     }}
+    .login-titulo-claro {{
+        color: #1e293b;
+        text-shadow: 0 0 1px rgba(255,255,255,0.9), 0 2px 4px rgba(0,0,0,0.15),
+                     0 -1px 2px rgba(255,255,255,0.6), 1px 1px 2px rgba(100,116,139,0.4);
+        background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 25%, #94a3b8 50%, #64748b 50%, #94a3b8 75%, #e2e8f0 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }}
+    .login-subtitulo {{ display: none !important; }}
     .login-dashboard {{
         font-size: 0.8rem;
         color: {txt2};
+        margin-top: 0.75rem;
         margin-bottom: 1rem;
         padding: 0.5rem;
         border-radius: 8px;
@@ -297,37 +373,44 @@ def _render_pantalla_login():
         color: {txt} !important;
     }}
     .block-container .stButton > button, .block-container [data-testid="stFormSubmitButton"] > button {{
-        color: {txt} !important;
-        background: linear-gradient(180deg, rgba(55,65,80,0.95) 0%, rgba(35,42,52,0.95) 50%, rgba(25,30,40,0.95) 100%) !important;
-        border: 1px solid {border_login} !important;
+        color: #ffffff !important;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.3) !important;
+        background: linear-gradient(180deg, #6ba3e0 0%, #3d7ab8 30%, #2568a0 60%, #2d6a9f 100%) !important;
+        border: 1px solid rgba(100,160,220,0.5) !important;
         outline: none !important;
-        box-shadow: 0 0 14px rgba(91,155,213,0.25),
-                    4px 6px 16px rgba(0,0,0,0.45),
-                    inset 0 1px 0 rgba(255,255,255,0.1) !important;
+        box-shadow: inset 0 2px 4px rgba(255,255,255,0.3),
+                    inset 0 -3px 6px rgba(0,0,0,0.3),
+                    0 4px 12px rgba(0,0,0,0.4) !important;
+        transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+    }}
+    .block-container .stButton > button:hover, .block-container [data-testid="stFormSubmitButton"] > button:hover {{
+        background: linear-gradient(180deg, #7eb3f0 0%, #4a8ac8 30%, #2d78b0 60%, #3a7ab8 100%) !important;
+        transform: translateY(-2px) !important;
+        box-shadow: inset 0 2px 4px rgba(255,255,255,0.4),
+                    inset 0 -2px 4px rgba(0,0,0,0.2),
+                    0 6px 16px rgba(0,0,0,0.5),
+                    0 0 12px rgba(100,160,220,0.35) !important;
+    }}
+    .block-container .stButton > button:active, .block-container [data-testid="stFormSubmitButton"] > button:active {{
+        transform: translateY(1px) !important;
+        box-shadow: inset 0 3px 6px rgba(0,0,0,0.35), 0 2px 6px rgba(0,0,0,0.4) !important;
     }}
     div[data-testid="stVerticalBlock"] > div {{ background: transparent !important; }}
+    .main .block-container form {{
+        background: {form_bg_login} !important;
+        padding: 1.5rem !important;
+        border-radius: 12px !important;
+        border: 1px solid {border_login} !important;
+    }}
+    .login-logo-wrap {{ max-width: 100% !important; width: 100% !important; margin: 0 auto !important; }}
+    .login-logo-wrap img {{ max-width: 100% !important; width: 580px !important; margin: 0 auto !important; display: block !important; }}
     @media (max-width: 768px) {{
-        .main .block-container {{ padding: 1rem !important; max-width: 100% !important; }}
-        .login-titulo {{ font-size: 1.4rem; }}
-        .login-subtitulo {{ font-size: 0.85rem; }}
+        .main .block-container {{ padding: 0.5rem 0.6rem !important; max-width: 100% !important; }}
+        .login-logo-wrap img {{ width: min(100%, 380px) !important; }}
+        .login-titulo {{ font-size: 1.1rem; margin-top: 0.5rem; }}
     }}
     </style>
     """, unsafe_allow_html=True)
-
-    col_idioma, col_tema, _ = st.columns([1, 1, 2])
-    with col_idioma:
-        lang_sel = st.radio("Idioma", ["ES", "EN"], format_func=lambda x: "ESPAÑOL" if x == "ES" else "ENGLISH",
-                            key="login_idioma", horizontal=True, label_visibility="collapsed",
-                            index=0 if lang == "ES" else 1)
-        if lang_sel != lang:
-            st.session_state["idioma"] = lang_sel
-            st.rerun()
-    with col_tema:
-        tema_sel = st.radio("Tema", ["oscuro", "claro"], format_func=lambda x: "🌙" if x == "oscuro" else "☀️",
-                            key="login_tema", horizontal=True, label_visibility="collapsed")
-        if tema_sel != st.session_state.get("tema_login", "oscuro"):
-            st.session_state["tema_login"] = tema_sel
-            st.rerun()
 
     if _login_bloqueado():
         st.error(t["login_bloqueado"].format(min=MINUTOS_BLOQUEO_LOGIN))
@@ -339,13 +422,9 @@ def _render_pantalla_login():
         if "login_contrasena_input" not in st.session_state:
             st.session_state["login_contrasena_input"] = st.session_state.get("login_contrasena_guardada", "")
 
-    ultima = _ultima_actividad_audit()
-    if ultima:
-        st.markdown(f"<p class='login-dashboard'>📋 {t['login_ultima_actividad']}: {ultima['fecha']} — {ultima['usuario']} ({ultima['accion']})</p>",
-                    unsafe_allow_html=True)
-
     _, col_centro, _ = st.columns([1, 1, 1])
     with col_centro:
+        st.markdown("<div class='login-logo-wrap'>", unsafe_allow_html=True)
         if os.path.exists(LOGO_LOGIN):
             st.image(LOGO_LOGIN, use_container_width=True)
         else:
@@ -355,17 +434,27 @@ def _render_pantalla_login():
             <span style="font-size:3.5rem;">⛪</span>
             </div>
             """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown(f"<p class='login-titulo'>{t['login_titulo']}</p>", unsafe_allow_html=True)
-    st.markdown(f"<p class='login-subtitulo'>{t['login_subtitulo']}</p>", unsafe_allow_html=True)
+    titulo_clase = "login-titulo login-titulo-claro" if tema == "claro" else "login-titulo"
+    st.markdown(f"<p class='{titulo_clase}'>{t['login_titulo']}</p>", unsafe_allow_html=True)
 
+    mostrar_pwd = st.session_state.get("login_mostrar_contrasena", False)
+    st.checkbox("👁 " + t.get("login_mostrar_contrasena", "Ver contraseña"), value=mostrar_pwd, key="login_mostrar_contrasena")
+    # Streamlit solo acepta type "default" o "password" (nunca "text")
+    _pwd_input_type = "default" if mostrar_pwd else "password"
     with st.form("form_login", clear_on_submit=False):
         usuario = st.text_input(t["login_usuario"], key="login_usuario_input", placeholder=t.get("login_usuario_placeholder", "admin"),
                                 label_visibility="visible")
-        contrasena = st.text_input(t["login_contrasena"], type="password", key="login_contrasena_input",
-                                    placeholder="••••••••", label_visibility="visible")
+        contrasena = st.text_input(
+            t["login_contrasena"],
+            type=_pwd_input_type,
+            key="login_contrasena_input",
+            placeholder="••••••••",
+            label_visibility="visible",
+        )
         recordar = st.checkbox(t["login_recordar"], key="login_recordar", value=st.session_state.get("recordar_sesion", False))
-        submitted = st.form_submit_button(t["login_btn"])
+        submitted = st.form_submit_button(t["login_btn"], type="primary")
         if submitted:
             if usuario and contrasena:
                 uid = usuario.strip().lower()
@@ -400,13 +489,150 @@ def _render_pantalla_login():
                 st.error(t["login_error"])
 
     with st.expander(t["login_recuperar"], expanded=False):
-        st.caption(t["login_recuperar_ayuda"])
+        _render_recuperar_contrasena(t, lang)
+
+    ultima = _ultima_actividad_audit()
+    if ultima:
+        st.markdown(f"<p class='login-dashboard'>📋 {t['login_ultima_actividad']}: {ultima['fecha']} — {ultima['usuario']} ({ultima['accion']})</p>",
+                    unsafe_allow_html=True)
+    with st.expander("🌐 Idioma / Tema", expanded=False):
+        col_idioma, col_tema = st.columns(2)
+        with col_idioma:
+            lang_sel = st.radio("Idioma", ["ES", "EN"], format_func=lambda x: "ESPAÑOL" if x == "ES" else "ENGLISH",
+                                key="login_idioma", horizontal=True, index=0 if lang == "ES" else 1)
+            if lang_sel != lang:
+                st.session_state["idioma"] = lang_sel
+                st.rerun()
+        with col_tema:
+            tema_sel = st.radio("Tema", ["oscuro", "claro"], format_func=lambda x: "🌙 Oscuro" if x == "oscuro" else "☀️ Claro",
+                                key="login_tema", horizontal=True)
+            if tema_sel != st.session_state.get("tema_login", "oscuro"):
+                st.session_state["tema_login"] = tema_sel
+                st.rerun()
+
+def _render_recuperar_contrasena(t, lang):
+    """Flujo de recuperación por preguntas de seguridad o mensaje para admin."""
+    # Preguntas de seguridad predefinidas (clave para guardar, texto para mostrar)
+    PREGUNTAS_IDS = [
+        "recuperar_pregunta_1", "recuperar_pregunta_2", "recuperar_pregunta_3",
+        "recuperar_pregunta_4", "recuperar_pregunta_5", "recuperar_pregunta_6",
+    ]
+    step = st.session_state.get("recuperar_step", 0)
+    usuario_rec = (st.session_state.get("recuperar_usuario", "") or "").strip().lower()
+
+    if step == 0:
+        st.caption(t.get("login_recuperar_ayuda", ""))
+        with st.form("form_recuperar_1"):
+            u = st.text_input(t.get("recuperar_usuario", "Usuario"), key="recuperar_usuario_input", placeholder="admin")
+            if st.form_submit_button(t.get("recuperar_btn_verificar", "Verificar")):
+                if u and u.strip():
+                    uid = u.strip().lower()
+                    data = cargar_permisos()
+                    usuarios = data.get("usuarios", {})
+                    if uid not in usuarios:
+                        st.error(t.get("recuperar_error_usuario", "Usuario no encontrado."))
+                    else:
+                        info = usuarios[uid]
+                        pregunta_key = info.get("pregunta_seguridad") or ""
+                        if not pregunta_key or not info.get("respuesta_seguridad_hash"):
+                            st.info(t.get("recuperar_sin_pregunta", "Este usuario no tiene pregunta de seguridad. El administrador debe ir a Administración → usuario y configurar «Pregunta de seguridad» y «Respuesta» para poder recuperar la contraseña desde aquí."))
+                        else:
+                            st.session_state["recuperar_step"] = 1
+                            st.session_state["recuperar_usuario"] = uid
+                            st.session_state["recuperar_pregunta_key"] = pregunta_key
+                            st.rerun()
+                else:
+                    st.error(t.get("recuperar_error_usuario", "Indique el usuario."))
+        return
+
+    if step == 1:
+        pregunta_key = st.session_state.get("recuperar_pregunta_key", "")
+        pregunta_texto = t.get(pregunta_key, pregunta_key)
+        with st.form("form_recuperar_2"):
+            st.markdown(f"**{pregunta_texto}**")
+            respuesta = st.text_input(t.get("recuperar_respuesta", "Su respuesta"), type="password", key="recuperar_respuesta_input")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.form_submit_button(t.get("recuperar_btn_comprobar", "Comprobar")):
+                    if not respuesta or not respuesta.strip():
+                        st.error(t.get("recuperar_error_respuesta", "Escriba la respuesta."))
+                    else:
+                        data = cargar_permisos()
+                        info = data.get("usuarios", {}).get(usuario_rec, {})
+                        hash_guardado = info.get("respuesta_seguridad_hash", "")
+                        if _verificar_contrasena_hash(respuesta.strip(), hash_guardado):
+                            st.session_state["recuperar_step"] = 2
+                            st.rerun()
+                        else:
+                            st.error(t.get("recuperar_error_respuesta", "Respuesta incorrecta."))
+            with col2:
+                if st.form_submit_button(t.get("recuperar_volver", "Volver")):
+                    st.session_state["recuperar_step"] = 0
+                    st.session_state.pop("recuperar_usuario", None)
+                    st.session_state.pop("recuperar_pregunta_key", None)
+                    st.rerun()
+        return
+
+    if step == 2:
+        with st.form("form_recuperar_3"):
+            st.success(t.get("recuperar_ok_verificado", "Respuesta correcta. Elija nueva contraseña."))
+            nueva = st.text_input(t.get("recuperar_nueva_contrasena", "Nueva contraseña"), type="password", key="recuperar_nueva_input")
+            confirmar = st.text_input(t.get("recuperar_confirmar", "Confirmar contraseña"), type="password", key="recuperar_confirmar_input")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.form_submit_button(t.get("recuperar_btn_restablecer", "Restablecer contraseña")):
+                    if not nueva or not confirmar:
+                        st.error(t.get("cambiar_credenciales_vacios", "Complete ambos campos."))
+                    elif nueva != confirmar:
+                        st.error(t.get("cambiar_credenciales_no_coinciden", "Las contraseñas no coinciden."))
+                    else:
+                        ok_pol, msg_pol = _validar_politica_contrasena(nueva)
+                        if not ok_pol:
+                            st.warning(msg_pol)
+                        else:
+                            data = cargar_permisos()
+                            if usuario_rec in data.get("usuarios", {}):
+                                data["usuarios"][usuario_rec]["contrasena"] = _hash_contrasena(nueva)
+                                try:
+                                    with open(DB_PERMISOS, "w", encoding="utf-8") as f:
+                                        json.dump(data, f, indent=2, ensure_ascii=False)
+                                    cargar_permisos.clear()
+                                    audit_log(usuario_rec, "contrasena_recuperada_pregunta", "")
+                                    st.success(t.get("recuperar_ok", "Contraseña restablecida. Ya puede iniciar sesión."))
+                                    for k in list(st.session_state.keys()):
+                                        if k.startswith("recuperar_"):
+                                            st.session_state.pop(k, None)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(str(e))
+            with col2:
+                if st.form_submit_button(t.get("recuperar_volver", "Volver")):
+                    st.session_state["recuperar_step"] = 1
+                    st.rerun()
+        return
 
 def _render_pantalla_cambiar_credenciales():
     """Pantalla obligatoria tras primer login con admin/admin: cambiar contraseña antes de continuar."""
     lang = st.session_state.get("idioma", "ES")
     t = TEXTOS.get(lang, TEXTOS["ES"])
     st.set_page_config(page_title="Cambiar credenciales", page_icon="🔐", layout="centered", initial_sidebar_state="collapsed")
+    st.markdown("""
+    <style>
+    [data-testid="stToolbar"], [data-testid="stStatusWidget"], [data-testid="stDeployButton"] { display: none !important; }
+    .stApp > header { display: none !important; }
+    #MainMenu, footer { visibility: hidden !important; }
+    .block-container .stButton > button, .block-container [data-testid="stFormSubmitButton"] > button {
+        color: #ffffff !important;
+        background: linear-gradient(180deg, #6ba3e0 0%, #3d7ab8 30%, #2568a0 60%, #2d6a9f 100%) !important;
+        border: 1px solid rgba(100,160,220,0.5) !important;
+        box-shadow: inset 0 2px 4px rgba(255,255,255,0.3), inset 0 -3px 6px rgba(0,0,0,0.3), 0 4px 12px rgba(0,0,0,0.4) !important;
+    }
+    .block-container .stButton > button:hover, .block-container [data-testid="stFormSubmitButton"] > button:hover {
+        background: linear-gradient(180deg, #7eb3f0 0%, #4a8ac8 30%, #2d78b0 60%, #3a7ab8 100%) !important;
+        transform: translateY(-2px) !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     st.markdown(f"## 🔐 {t['cambiar_credenciales_titulo']}")
     st.info(t["cambiar_credenciales_info"])
     with st.form("form_cambiar_credenciales"):
@@ -452,6 +678,13 @@ PERMISOS_DISPONIBLES = [
     ("ver_informe_pdf", "VER INFORME PDF"),
     ("ver_exportar_hoja_pdf", "VER EXPORTAR HOJA PDF"),
 ]
+# Perfiles para aplicar de un clic (plantillas de permisos)
+PERFIL_PERMISOS = {
+    "asistente": ["ver_inicio", "ver_arqueo_caja"],
+    "tesorero": ["ver_inicio", "ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"],
+    "pastor": ["ver_inicio", "ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad", "ver_presupuesto_metas", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"],
+    "ministerio_musica": ["ver_inicio", "ver_arqueo_caja", "ver_hoja_contable", "ver_informe_pdf"],
+}
 _ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 # Logo metálico futurista: principal en login, inicio y sidebar
 LOGO_PRINCIPAL = os.path.join(_ASSETS, "logo_principal.png")
@@ -534,6 +767,8 @@ TEXTOS = {
         "caracteres": "CARACTERES",
         "sin_movimientos": "NO HAY MOVIMIENTOS REGISTRADOS.",
         "menu_navegacion": "NAVEGACIÓN",
+        "abrir_menu": "▶ Menú",
+        "abrir_menu_ayuda": "Abrir menú de navegación (cortina)",
         "inicio": "INICIO",
         "ministerio_finanzas": "MINISTERIO DE FINANZAS",
         "sistema_tesoreria": "SISTEMA DE TESORERÍA",
@@ -655,11 +890,36 @@ TEXTOS = {
         "admin_asignar_permisos": "Usuario **{nombre}** añadido. Asigne o quite permisos con las casillas de abajo.",
         "admin_caption_admin": "El administrador siempre ve todo. No se pueden cambiar sus permisos.",
         "admin_caption_verde_rojo": "Verde = puede ver esa sección. Rojo = no puede. Clic en la casilla para cambiar.",
+        "admin_responsable_titulo": "Persona responsable (oficial)",
+        "admin_responsable_nombre": "Nombre completo",
+        "admin_responsable_licencia": "Licencia de conducir o ID",
+        "admin_guardar_responsable": "Registrar responsable",
+        "admin_responsable_guardado": "Responsable registrado.",
         "admin_contrasena": "Contraseña (opcional)",
         "admin_contrasena_placeholder": "Dejar vacío = usar predeterminada",
         "admin_guardar_contrasena": "Guardar contraseña",
         "admin_contrasena_guardada": "Contraseña guardada.",
         "admin_reset_contrasena": "Restablecer contraseña (solo admin)",
+        "admin_pregunta_seguridad_titulo": "Pregunta de seguridad (recuperar contraseña)",
+        "admin_pregunta_seguridad": "Pregunta",
+        "admin_guardar_pregunta": "Guardar pregunta y respuesta",
+        "admin_pregunta_guardada": "Pregunta de seguridad guardada.",
+        "admin_respuesta_placeholder": "Solo el admin la conoce",
+        "admin_respuesta_requerida": "Escriba la respuesta para guardar.",
+        "admin_eliminar_usuario": "🗑️ Eliminar usuario",
+        "admin_confirmar_eliminar": "Escriba ELIMINAR para confirmar.",
+        "admin_usuario_eliminado": "Usuario «{nombre}» eliminado.",
+        "admin_plantilla": "Aplicar perfil",
+        "admin_plantilla_ayuda": "Asigna permisos de un perfil predefinido.",
+        "admin_copiar_permisos": "Copiar permisos de",
+        "admin_copiar_ok": "Permisos copiados de {origen}.",
+        "admin_sin_contrasena": "⚠️ Sin contraseña",
+        "admin_ultima_actividad": "Última actividad",
+        "admin_rastreo_titulo": "RASTREO DE MOVIMIENTOS POR USUARIO",
+        "admin_rastreo_sub": "Registro de acciones por usuario (solo clave maestra).",
+        "admin_sin_movimientos": "Sin movimientos registrados.",
+        "admin_descargar_permisos": "Descargar permisos (JSON)",
+        "admin_resumen_permisos": "RESUMEN DE PERMISOS",
         "tema_oscuro": "Tema oscuro",
         "tema_claro": "Tema claro",
         "admin_expander_admin": " — Administrador (todos los permisos)",
@@ -667,6 +927,30 @@ TEXTOS = {
         "admin_error_reinicio": "No se pudo completar el reinicio.",
         "admin_debe_escribir": "Debe escribir exactamente «{palabra}» para confirmar.",
         "admin_error_restaurar": "No se pudo restaurar el respaldo.",
+        "admin_rastreo_titulo": "Rastreo de movimientos por usuario (solo clave maestra)",
+        "admin_rastreo_ayuda": "Últimas acciones registradas por usuario. Solo visible con acceso maestro.",
+        "admin_perfil_aplicar": "Aplicar perfil",
+        "admin_perfil_tesorero": "Tesorero",
+        "admin_perfil_pastor": "Pastor",
+        "admin_perfil_asistente": "Asistente",
+        "admin_perfil_ministerio_musica": "Ministerio de Música",
+        "admin_copiar_permisos_de": "Copiar permisos de",
+        "admin_copiar_permisos_btn": "Copiar permisos",
+        "admin_permisos_copiados": "Permisos copiados de «{origen}» a «{destino}».",
+        "admin_eliminar_usuario": "Eliminar usuario",
+        "admin_eliminar_confirmar": "Escriba «ELIMINAR» para confirmar",
+        "admin_eliminar_placeholder": "ELIMINAR",
+        "admin_usuario_eliminado": "Usuario «{nombre}» eliminado.",
+        "admin_no_eliminar_admin": "No se puede eliminar al administrador.",
+        "admin_matriz_titulo": "Resumen de permisos (matriz)",
+        "admin_sin_contrasena": "Sin contraseña personalizada",
+        "admin_quitar_permiso_confirmar": "¿Quitar el permiso «{permiso}» a «{nombre}»?",
+        "admin_confirmar": "Confirmar",
+        "admin_cancelar": "Cancelar",
+        "admin_respaldo_descargar": "Descargar respaldo de permisos",
+        "admin_respaldo_restaurar": "Restaurar desde archivo",
+        "admin_respaldo_restaurado": "Respaldo restaurado correctamente.",
+        "admin_buscar_usuarios": "Buscar usuarios (nombre o ID)",
         "volver_inicio": "Volver al inicio",
         "descargar_pdf_whatsapp": "DESCARGAR PDF PARA WHATSAPP",
         "error_limpiar_tablero": "No se pudo limpiar el tablero.",
@@ -780,11 +1064,12 @@ TEXTOS = {
         "lo_contado_caja": "Lo que contó en caja ($)",
         "compartir_app": "Compartir app (instalar como Netflix/Disney)",
         "compartir_app_instrucciones": "Puedes enviar el enlace de esta app por WhatsApp. Quien lo abra en el celular puede instalarla como una app: en Chrome/Safari, menú (⋮ o Compartir) → «Añadir a la pantalla de inicio» o «Instalar aplicación». Así se abre como app, sin barra del navegador. El enlace que debes compartir es la URL donde está publicada esta app (ej. tu servidor o Streamlit Cloud). Para que no sea pesada al abrir, la imagen de inicio se adapta al tamaño del celular; si quieres menos peso, usa una imagen de inicio comprimida o reducida en assets.",
-        "login_titulo": "Iglesia Pentecostal de Welland",
+        "login_titulo": "United Pentecostal Church International",
         "login_subtitulo": "Inicia sesión para explorar las funciones financieras y herramientas en línea.",
         "login_usuario": "Usuario",
         "login_usuario_placeholder": "admin (primera vez: admin/admin)",
         "login_contrasena": "Contraseña",
+        "login_mostrar_contrasena": "Ver contraseña",
         "login_btn": "Iniciar sesión",
         "login_error": "Usuario o contraseña incorrectos.",
         "login_error_usuario": "Usuario no encontrado.",
@@ -792,8 +1077,27 @@ TEXTOS = {
         "login_bloqueado": "Demasiados intentos. Espere {min} minutos e intente de nuevo.",
         "login_recordar": "Recordar sesión",
         "login_recuperar": "¿Olvidó su contraseña?",
-        "login_recuperar_ayuda": "Administrador: vaya a Administración → usuario → Restablecer contraseña",
+        "login_recuperar_ayuda": "Recuperación por pregunta de seguridad: escriba su usuario y pulse Verificar. Si tiene pregunta y respuesta configuradas, podrá restablecer la contraseña aquí. Si no, el administrador debe configurarlas en Administración → usuario.",
         "login_ultima_actividad": "Última actividad",
+        "recuperar_usuario": "Usuario",
+        "recuperar_btn_verificar": "Verificar",
+        "recuperar_btn_comprobar": "Comprobar",
+        "recuperar_btn_restablecer": "Restablecer contraseña",
+        "recuperar_respuesta": "Su respuesta",
+        "recuperar_nueva_contrasena": "Nueva contraseña",
+        "recuperar_confirmar": "Confirmar contraseña",
+        "recuperar_volver": "Volver",
+        "recuperar_ok": "Contraseña restablecida. Ya puede iniciar sesión.",
+        "recuperar_ok_verificado": "Respuesta correcta. Elija nueva contraseña.",
+        "recuperar_error_usuario": "Usuario no encontrado.",
+        "recuperar_sin_pregunta": "Este usuario no tiene pregunta de seguridad. El administrador debe ir a Administración → usuario y configurar «Pregunta de seguridad» y «Respuesta» para poder recuperar la contraseña desde aquí.",
+        "recuperar_error_respuesta": "Respuesta incorrecta.",
+        "recuperar_pregunta_1": "¿Cuál es el nombre de su madre?",
+        "recuperar_pregunta_2": "¿Cuál es el nombre de su ciudad natal?",
+        "recuperar_pregunta_3": "¿Cuál fue el nombre de su primera mascota?",
+        "recuperar_pregunta_4": "¿Cuál es su mes de nacimiento?",
+        "recuperar_pregunta_5": "¿Últimos 4 dígitos de su teléfono?",
+        "recuperar_pregunta_6": "¿Nombre del ministerio o área que más le identifica?",
         "cambiar_credenciales_titulo": "Cambiar contraseña (obligatorio)",
         "cambiar_credenciales_info": "Por seguridad, debe establecer una contraseña antes de continuar. admin/admin ya no funcionará.",
         "cambiar_credenciales_nueva": "Nueva contraseña",
@@ -802,6 +1106,49 @@ TEXTOS = {
         "cambiar_credenciales_vacios": "Complete ambos campos.",
         "cambiar_credenciales_no_coinciden": "Las contraseñas no coinciden.",
         "cambiar_credenciales_ok": "Contraseña guardada. Redirigiendo...",
+        "resumen_periodo": "Resumen por período",
+        "periodo_mes": "Este mes",
+        "periodo_trimestre": "Este trimestre",
+        "periodo_ano": "Este año",
+        "comparar_periodo_anterior": "Comparar con período anterior",
+        "ingresos_periodo": "Ingresos",
+        "gastos_periodo": "Gastos",
+        "resultado_periodo": "Resultado",
+        "saldo_cierre": "Saldo al cierre",
+        "vs_anterior": "vs anterior",
+        "exportar_resumen_contador": "Exportar resumen para contador",
+        "exportar_resumen_ayuda": "Descarga CSV/Excel con totales por mes (ingresos, gastos, saldo) para enviar al contador.",
+        "exportar_btn_csv_mes": "CSV (totales por mes)",
+        "exportar_btn_excel_mes_tipo": "Excel (por mes y tipo de gasto)",
+        "grafico_por_tipo_gasto": "Gastos por tipo en el tiempo",
+        "alertas_contabilidad": "Alertas",
+        "alerta_sin_movimientos_dias": "Sin movimientos en los últimos {d} días.",
+        "filtro_tipo_movimiento": "Tipo de movimiento",
+        "solo_ingresos": "Solo ingresos",
+        "solo_gastos": "Solo gastos",
+        "todos_movimientos": "Todos",
+        "orden_hoja": "Orden",
+        "orden_recientes": "Más recientes primero",
+        "orden_antiguos": "Más antiguos primero",
+        "buscar_en_detalle": "Buscar en detalle",
+        "buscar_en_detalle_placeholder": "Texto en descripción...",
+        "respaldo_hoy": "Descargar respaldo de hoy",
+        "respaldo_hoy_ayuda": "Copia completa del libro con fecha de hoy (solo acceso maestro).",
+        "integridad_error_titulo": "⚠️ ERROR DE INTEGRIDAD — No use borrar hasta corregir",
+        "integridad_banner_titulo": "Error de integridad detectado",
+        "integridad_banner_deshabilitado": "El borrado de registros está deshabilitado hasta corregir o restaurar un respaldo.",
+        "mantenimiento_titulo": "Sistema en actualización",
+        "mantenimiento_aviso": "El administrador está realizando actualizaciones. Evite ingresar datos nuevos mientras vea este aviso. Si cierra y vuelve a abrir, podrá continuar; su trabajo guardado se mantiene visible.",
+        "mantenimiento_esperar": "Cuando el administrador desactive el mantenimiento, recargue la página para continuar. Lo que ya guardó no se pierde.",
+        "mantenimiento_guardado_visible": "Lo que guardó sigue guardado y lo verá al reanudar el sistema.",
+        "mantenimiento_sidebar": "Pausar sistema",
+        "mantenimiento_expander": "Pausar sistema (mantenimiento)",
+        "mantenimiento_ayuda": "Al activar, los demás usuarios verán un aviso de que el sistema está en actualización. Pueden cerrar y volver; su trabajo guardado se mantiene. Desactive cuando termine el mantenimiento.",
+        "mantenimiento_btn_activar": "Pausar sistema (mostrar aviso a usuarios)",
+        "mantenimiento_btn_desactivar": "Reanudar sistema",
+        "mantenimiento_activo_ahora": "Modo mantenimiento activo.",
+        "mantenimiento_activado_ok": "Aviso de mantenimiento activado. Los usuarios verán el mensaje al entrar.",
+        "mantenimiento_desactivado_ok": "Sistema reanudado. Los usuarios ya no verán el aviso.",
     },
     "EN": {
         "titulo": "WELLAND PENTECOSTAL CHURCH",
@@ -868,6 +1215,8 @@ TEXTOS = {
         "caracteres": "CHARACTERS",
         "sin_movimientos": "NO RECORDED TRANSACTIONS.",
         "menu_navegacion": "NAVIGATION",
+        "abrir_menu": "▶ Menu",
+        "abrir_menu_ayuda": "Open navigation menu (curtain)",
         "inicio": "HOME",
         "ministerio_finanzas": "FINANCE MINISTRY",
         "sistema_tesoreria": "TREASURY SYSTEM",
@@ -989,11 +1338,36 @@ TEXTOS = {
         "admin_asignar_permisos": "User **{nombre}** added. Assign or remove permissions with the checkboxes below.",
         "admin_caption_admin": "The administrator always sees everything. Their permissions cannot be changed.",
         "admin_caption_verde_rojo": "Green = can see that section. Red = cannot. Click the box to change.",
+        "admin_responsable_titulo": "Responsible person (official)",
+        "admin_responsable_nombre": "Full name",
+        "admin_responsable_licencia": "Driver's license or ID",
+        "admin_guardar_responsable": "Register responsible",
+        "admin_responsable_guardado": "Responsible person registered.",
         "admin_contrasena": "Password (optional)",
         "admin_contrasena_placeholder": "Leave empty = use default",
         "admin_guardar_contrasena": "Save password",
         "admin_contrasena_guardada": "Password saved.",
         "admin_reset_contrasena": "Reset password (admin only)",
+        "admin_pregunta_seguridad_titulo": "Security question (password recovery)",
+        "admin_pregunta_seguridad": "Question",
+        "admin_guardar_pregunta": "Save question and answer",
+        "admin_pregunta_guardada": "Security question saved.",
+        "admin_respuesta_placeholder": "Only admin knows it",
+        "admin_respuesta_requerida": "Enter the answer to save.",
+        "admin_eliminar_usuario": "🗑️ Delete user",
+        "admin_confirmar_eliminar": "Type DELETE to confirm.",
+        "admin_usuario_eliminado": "User '{nombre}' deleted.",
+        "admin_plantilla": "Apply profile",
+        "admin_plantilla_ayuda": "Assigns permissions from a predefined profile.",
+        "admin_copiar_permisos": "Copy permissions from",
+        "admin_copiar_ok": "Permissions copied from {origen}.",
+        "admin_sin_contrasena": "⚠️ No password",
+        "admin_ultima_actividad": "Last activity",
+        "admin_rastreo_titulo": "USER ACTIVITY TRACKING",
+        "admin_rastreo_sub": "Action log by user (master key only).",
+        "admin_sin_movimientos": "No recorded activity.",
+        "admin_descargar_permisos": "Download permissions (JSON)",
+        "admin_resumen_permisos": "PERMISSIONS SUMMARY",
         "tema_oscuro": "Dark theme",
         "tema_claro": "Light theme",
         "admin_expander_admin": " — Administrator (all permissions)",
@@ -1001,6 +1375,30 @@ TEXTOS = {
         "admin_error_reinicio": "Reset could not be completed.",
         "admin_debe_escribir": "You must type exactly «{palabra}» to confirm.",
         "admin_error_restaurar": "Backup could not be restored.",
+        "admin_rastreo_titulo": "User activity tracking (master key only)",
+        "admin_rastreo_ayuda": "Latest actions recorded per user. Only visible with master access.",
+        "admin_perfil_aplicar": "Apply profile",
+        "admin_perfil_tesorero": "Treasurer",
+        "admin_perfil_pastor": "Pastor",
+        "admin_perfil_asistente": "Assistant",
+        "admin_perfil_ministerio_musica": "Music Ministry",
+        "admin_copiar_permisos_de": "Copy permissions from",
+        "admin_copiar_permisos_btn": "Copy permissions",
+        "admin_permisos_copiados": "Permissions copied from «{origen}» to «{destino}».",
+        "admin_eliminar_usuario": "Delete user",
+        "admin_eliminar_confirmar": "Type «DELETE» to confirm",
+        "admin_eliminar_placeholder": "DELETE",
+        "admin_usuario_eliminado": "User «{nombre}» deleted.",
+        "admin_no_eliminar_admin": "Administrator cannot be deleted.",
+        "admin_matriz_titulo": "Permissions summary (matrix)",
+        "admin_sin_contrasena": "No custom password",
+        "admin_quitar_permiso_confirmar": "Remove permission «{permiso}» from «{nombre}»?",
+        "admin_confirmar": "Confirm",
+        "admin_cancelar": "Cancel",
+        "admin_respaldo_descargar": "Download permissions backup",
+        "admin_respaldo_restaurar": "Restore from file",
+        "admin_respaldo_restaurado": "Backup restored successfully.",
+        "admin_buscar_usuarios": "Search users (name or ID)",
         "volver_inicio": "Back to home",
         "descargar_pdf_whatsapp": "DOWNLOAD PDF FOR WHATSAPP",
         "error_limpiar_tablero": "Table could not be cleared.",
@@ -1114,11 +1512,12 @@ TEXTOS = {
         "lo_contado_caja": "What you counted in cash ($)",
         "compartir_app": "Share app (install like Netflix/Disney)",
         "compartir_app_instrucciones": "You can send this app's link via WhatsApp. Whoever opens it on their phone can install it as an app: in Chrome/Safari, menu (⋮ or Share) → «Add to Home Screen» or «Install app». It will open like an app, without the browser bar. The link to share is the URL where this app is published (e.g. your server or Streamlit Cloud). To keep it light, the home image is sized for the phone; use a compressed or smaller image in assets if you want faster loading.",
-        "login_titulo": "Iglesia Pentecostal de Welland",
+        "login_titulo": "United Pentecostal Church International",
         "login_subtitulo": "Log in to explore financial functions and online tools.",
         "login_usuario": "Username",
         "login_usuario_placeholder": "admin (first time: admin/admin)",
         "login_contrasena": "Password",
+        "login_mostrar_contrasena": "Show password",
         "login_btn": "Log In",
         "login_error": "Incorrect username or password.",
         "login_error_usuario": "User not found.",
@@ -1126,8 +1525,27 @@ TEXTOS = {
         "login_bloqueado": "Too many attempts. Wait {min} minutes and try again.",
         "login_recordar": "Remember session",
         "login_recuperar": "Forgot your password?",
-        "login_recuperar_ayuda": "Administrator: go to Administration → user → Reset password",
+        "login_recuperar_ayuda": "Recovery by security question: enter your username and click Verify. If you have a question and answer set, you can reset your password here. Otherwise, the administrator must set them in Administration → user.",
         "login_ultima_actividad": "Last activity",
+        "recuperar_usuario": "Username",
+        "recuperar_btn_verificar": "Verify",
+        "recuperar_btn_comprobar": "Check",
+        "recuperar_btn_restablecer": "Reset password",
+        "recuperar_respuesta": "Your answer",
+        "recuperar_nueva_contrasena": "New password",
+        "recuperar_confirmar": "Confirm password",
+        "recuperar_volver": "Back",
+        "recuperar_ok": "Password reset. You can now log in.",
+        "recuperar_ok_verificado": "Correct answer. Choose a new password.",
+        "recuperar_error_usuario": "User not found.",
+        "recuperar_sin_pregunta": "This user has no security question. The administrator must go to Administration → user and set «Security question» and «Answer» so the password can be recovered here.",
+        "recuperar_error_respuesta": "Incorrect answer.",
+        "recuperar_pregunta_1": "What is your mother's name?",
+        "recuperar_pregunta_2": "What is the name of your hometown?",
+        "recuperar_pregunta_3": "What was your first pet's name?",
+        "recuperar_pregunta_4": "What is your month of birth?",
+        "recuperar_pregunta_5": "Last 4 digits of your phone?",
+        "recuperar_pregunta_6": "Name of the ministry or area that best identifies you?",
         "cambiar_credenciales_titulo": "Change password (required)",
         "cambiar_credenciales_info": "For security, you must set a password before continuing. admin/admin will no longer work.",
         "cambiar_credenciales_nueva": "New password",
@@ -1136,6 +1554,49 @@ TEXTOS = {
         "cambiar_credenciales_vacios": "Fill in both fields.",
         "cambiar_credenciales_no_coinciden": "Passwords do not match.",
         "cambiar_credenciales_ok": "Password saved. Redirecting...",
+        "resumen_periodo": "Summary by period",
+        "periodo_mes": "This month",
+        "periodo_trimestre": "This quarter",
+        "periodo_ano": "This year",
+        "comparar_periodo_anterior": "Compare with previous period",
+        "ingresos_periodo": "Income",
+        "gastos_periodo": "Expenses",
+        "resultado_periodo": "Result",
+        "saldo_cierre": "Balance at close",
+        "vs_anterior": "vs previous",
+        "exportar_resumen_contador": "Export summary for accountant",
+        "exportar_resumen_ayuda": "Download CSV/Excel with monthly totals (income, expenses, balance) to send to accountant.",
+        "exportar_btn_csv_mes": "CSV (totals by month)",
+        "exportar_btn_excel_mes_tipo": "Excel (by month and expense type)",
+        "grafico_por_tipo_gasto": "Expenses by type over time",
+        "alertas_contabilidad": "Alerts",
+        "alerta_sin_movimientos_dias": "No transactions in the last {d} days.",
+        "filtro_tipo_movimiento": "Movement type",
+        "solo_ingresos": "Income only",
+        "solo_gastos": "Expenses only",
+        "todos_movimientos": "All",
+        "orden_hoja": "Order",
+        "orden_recientes": "Newest first",
+        "orden_antiguos": "Oldest first",
+        "buscar_en_detalle": "Search in detail",
+        "buscar_en_detalle_placeholder": "Text in description...",
+        "respaldo_hoy": "Download today's backup",
+        "respaldo_hoy_ayuda": "Full ledger copy with today's date (master access only).",
+        "integridad_error_titulo": "⚠️ INTEGRITY ERROR — Do not delete until fixed",
+        "integridad_banner_titulo": "Integrity error detected",
+        "integridad_banner_deshabilitado": "Record deletion is disabled until you fix or restore a backup.",
+        "mantenimiento_titulo": "System under maintenance",
+        "mantenimiento_aviso": "The administrator is performing updates. Avoid entering new data while you see this notice. If you close and reopen, you can continue; your saved work remains visible.",
+        "mantenimiento_esperar": "When the administrator turns off maintenance, reload the page to continue. Your saved work is not lost.",
+        "mantenimiento_guardado_visible": "What you saved remains saved and you will see it when the system resumes.",
+        "mantenimiento_sidebar": "Pause system",
+        "mantenimiento_expander": "Pause system (maintenance)",
+        "mantenimiento_ayuda": "When enabled, other users will see a notice that the system is being updated. They can close and return; their saved work is preserved. Disable when maintenance is complete.",
+        "mantenimiento_btn_activar": "Pause system (show notice to users)",
+        "mantenimiento_btn_desactivar": "Resume system",
+        "mantenimiento_activo_ahora": "Maintenance mode active.",
+        "mantenimiento_activado_ok": "Maintenance notice enabled. Users will see the message when they open the app.",
+        "mantenimiento_desactivado_ok": "System resumed. Users will no longer see the notice.",
     },
 }
 
@@ -1772,6 +2233,9 @@ def cargar_permisos():
     if "pastor" not in data.get("usuarios", {}):
         data["usuarios"]["pastor"] = {"nombre": "Pastor", "permisos": ["ver_inicio", "ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad", "ver_presupuesto_metas", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"]}
         need_save = True
+    if "orden_usuarios" not in data or not isinstance(data["orden_usuarios"], list):
+        data["orden_usuarios"] = list(data.get("usuarios", {}).keys())
+        need_save = True
     if need_save:
         try:
             with open(DB_PERMISOS, "w", encoding="utf-8") as f:
@@ -2220,12 +2684,28 @@ def main():
                 audit_log(st.session_state.get("usuario_actual", "?"), "sesion_expirada_inactividad", "")
             st.session_state["admin_autorizado"] = False
     st.session_state["last_activity"] = now
+
+    # Fix menú lateral: Streamlit ignora initial_sidebar_state si el valor no cambia (issue #4483).
+    # Solución AlonSam: mantener "expanded" por defecto para que al pulsar nav haya cambio a "collapsed".
+    collapse_requested = st.session_state.pop("sidebar_collapse_requested", False)
+    if collapse_requested:
+        sidebar_state = "collapsed"
+    else:
+        sidebar_state = st.session_state.get("sidebar_state", "expanded")
     st.set_page_config(
         page_title=t["titulo"],
         page_icon="⛪",
         layout="wide",
-        initial_sidebar_state=st.session_state.get("sidebar_state", "collapsed")
+        initial_sidebar_state=sidebar_state
     )
+
+    # Solo resetear a "expanded" cuando NO acabamos de colapsar, para que el próximo clic en nav detecte el cambio.
+    # Si acabamos de colapsar, mantener "collapsed" para que la flechita de Streamlit permita reabrir.
+    if not collapse_requested:
+        st.session_state["sidebar_state"] = "expanded"
+
+    # No forzar width:0 con CSS: ocultaría el botón para volver a abrir el menú.
+    # Streamlit colapsa nativamente y deja visible la flechita/hamburguesa para reabrir.
 
     # PWA: meta tags para que se pueda "instalar" como app (Netflix/Disney style) y compartir link por WhatsApp
     _theme_color = "#1a365d" if st.session_state.get("tema_app", "oscuro") == "claro" else "#0d1b2a"
@@ -2256,6 +2736,39 @@ def main():
     </script>
     """, unsafe_allow_html=True)
 
+    # Ocultar iconos de desarrollador (toolbar, menú, Host, etc.) para todos excepto clave universal
+    # IMPORTANTE: cuando el sidebar está colapsado, NO ocultar el botón de expandir (flechita/hamburguesa)
+    es_maestro = st.session_state.get("es_acceso_maestro", False)
+    sidebar_colapsado = st.session_state.get("sidebar_state") == "collapsed"
+    if not es_maestro:
+        if sidebar_colapsado:
+            # Sidebar colapsado: mostrar solo la flechita para reabrir; ocultar el resto del header
+            st.markdown("""
+            <style>
+            [data-testid="stToolbar"], [data-testid="stStatusWidget"], [data-testid="stDeployButton"] { display: none !important; }
+            #MainMenu, footer { visibility: hidden !important; }
+            div[data-testid="stToolbar"] { display: none !important; }
+            /* Mantener visible el botón/flechita para expandir el sidebar (cortina) */
+            header[data-testid="stHeader"] { min-height: 2.5rem !important; }
+            button[kind="header"] { display: flex !important; visibility: visible !important; }
+            </style>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <style>
+            /* Ocultar barra de herramientas, menú y opciones de desarrollador para usuarios normales */
+            [data-testid="stToolbar"] { display: none !important; }
+            [data-testid="stStatusWidget"] { display: none !important; }
+            header[data-testid="stHeader"] { display: none !important; }
+            .stApp > header { display: none !important; }
+            #MainMenu { visibility: hidden !important; }
+            footer { visibility: hidden !important; }
+            [data-testid="stDeployButton"] { display: none !important; }
+            button[kind="header"] { display: none !important; }
+            div[data-testid="stToolbar"] { display: none !important; }
+            </style>
+            """, unsafe_allow_html=True)
+
     # Estilo: menú última generación + tema (oscuro/claro)
     tema_app = st.session_state.get("tema_app", "oscuro")
     if tema_app == "claro":
@@ -2263,6 +2776,11 @@ def main():
         txt_main = "#1a365d"
         btn_txt = "#1a365d"
         btn_bg = "rgba(26, 54, 93, 0.15)"
+        btn_bg_grad = "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(230,240,255,0.98) 50%, rgba(200,220,245,0.98) 100%)"
+        btn_bg_hover = "linear-gradient(180deg, rgba(240,248,255,0.98) 0%, rgba(210,230,250,0.98) 50%, rgba(180,210,240,0.98) 100%)"
+        btn_border = "1px solid rgba(26,54,93,0.4)"
+        sidebar_btn_bg = "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(220,235,255,0.95) 50%, rgba(190,215,245,0.95) 100%)"
+        sidebar_btn_hover = "linear-gradient(180deg, rgba(240,248,255,0.98) 0%, rgba(200,225,250,0.98) 50%, rgba(170,205,240,0.98) 100%)"
         input_bg = "rgba(255,255,255,0.95)"
         input_color = "#1a365d"
         sidebar_bg = "linear-gradient(180deg, #c5d4e4 0%, #a8bdd4 50%, #8fa9c2 100%)"
@@ -2282,6 +2800,11 @@ def main():
         txt_main = "#FFFFFF"
         btn_txt = "#FFFFFF"
         btn_bg = "rgba(44, 48, 56, 0.25)"
+        btn_bg_grad = "linear-gradient(180deg, rgba(70,78,90,0.98) 0%, rgba(45,52,62,0.98) 50%, rgba(30,36,44,0.98) 100%)"
+        btn_bg_hover = "linear-gradient(180deg, rgba(80,88,100,0.98) 0%, rgba(55,62,72,0.98) 50%, rgba(40,46,54,0.98) 100%)"
+        btn_border = "1px solid transparent"
+        sidebar_btn_bg = "linear-gradient(180deg, rgba(55,65,78,0.9) 0%, rgba(35,42,52,0.9) 50%, rgba(25,30,38,0.9) 100%)"
+        sidebar_btn_hover = "linear-gradient(180deg, rgba(65,75,88,0.95) 0%, rgba(45,52,62,0.95) 50%, rgba(35,40,48,0.95) 100%)"
         input_bg = "rgba(30, 40, 55, 0.4)"
         input_color = "#FFFFFF"
         sidebar_bg = f"linear-gradient(180deg, #0a1220 0%, {AZUL_OSCURO} 40%, #0d2238 100%)"
@@ -2298,6 +2821,37 @@ def main():
         active_menu_txt = "#FFFFFF"
     st.markdown(f"""
     <style>
+    /* Reducir espacio perdido: aprovechar pantalla en móvil y todas las oficinas */
+    .stApp, [data-testid="stAppViewContainer"], .main .block-container,
+    div[data-testid="stAppViewContainer"] .block-container,
+    section[data-testid="stSidebar"] + div .block-container,
+    section.main .block-container {{
+        padding-top: 0.2rem !important;
+        padding-bottom: 0.5rem !important;
+        padding-left: 0.75rem !important;
+        padding-right: 0.75rem !important;
+    }}
+    div[data-testid="stVerticalBlock"] > div {{
+        padding: 0.2rem 0.15rem !important;
+    }}
+    .main [data-testid="stVerticalBlock"] > div:first-child {{ padding-top: 0 !important; margin-top: 0 !important; }}
+    @media (max-width: 768px) {{
+        .stApp, [data-testid="stAppViewContainer"], .main .block-container,
+        div[data-testid="stAppViewContainer"] .block-container,
+        section.main .block-container {{
+            padding-top: 0.05rem !important;
+            padding-bottom: 0.35rem !important;
+            padding-left: 0.4rem !important;
+            padding-right: 0.4rem !important;
+        }}
+        div[data-testid="stVerticalBlock"] > div {{
+            padding: 0.15rem 0.1rem !important;
+        }}
+        .main hr {{ margin: 0.2rem 0 !important; }}
+        [data-testid="column"] {{ padding-left: 0.15rem !important; padding-right: 0.15rem !important; }}
+        .main h1, .main h2, .main h3 {{ margin-top: 0.2rem !important; margin-bottom: 0.25rem !important; }}
+        .main .stMarkdown {{ margin-bottom: 0.2rem !important; }}
+    }}
     .stApp, [data-testid="stAppViewContainer"], .main .block-container {{
         background: {bg_main} !important;
     }}
@@ -2308,51 +2862,102 @@ def main():
         font-family: Calibri, 'Segoe UI', sans-serif !important;
         color: {txt_main} !important;
     }}
-    /* Botones REGISTRAR (arqueo y gastos): metálicos 3D, bordes transparentes */
+    /* TODOS los botones: metálico azul brillante (#6ba3e0→#2568a0), letras blancas, uniforme en toda la app */
+    /* Incluye: Refrescar, Browse files, form submit, download, etc. Gradiente con reflejos luminosos. */
+    .stApp [data-testid="stButton"] > button,
+    .stApp [data-testid="stFormSubmitButton"] > button,
+    .stApp [data-testid="stDownloadButton"] > button,
+    .stApp [data-testid="stDownloadButton"] a,
+    .stApp [data-testid="stFileUploader"] [data-testid="stButton"] > button,
+    .stApp [data-testid="stFileUploader"] button,
+    .stApp [data-testid="stFileUploader"] a,
+    .stApp [data-testid="stFileUploader"] [role="button"],
     .main .stButton > button,
     .main form [data-testid="stFormSubmitButton"] > button,
-    .main [data-testid="stDownloadButton"] > button {{
+    .main [data-testid="stDownloadButton"] > button,
+    .main [data-testid="stExpander"] .stButton > button,
+    .main [data-testid="stExpander"] [data-testid="stVerticalBlock"] .stButton > button,
+    .main [data-testid="stExpander"] [data-testid="stDownloadButton"] > button,
+    .main [data-testid="stFileUploader"] [data-testid="stButton"] > button,
+    .main [data-testid="stFileUploader"] button,
+    .main [data-testid="stFileUploader"] a,
+    .main [data-testid="stFileUploader"] [role="button"],
+    .main [data-testid="column"] [data-testid="stButton"] > button {{
         width: 100%;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
         font-family: Calibri, 'Segoe UI', sans-serif !important;
-        font-size: 1.8rem !important;
-        padding: 1rem 2rem !important;
-        min-height: 3.2rem !important;
-        background: linear-gradient(180deg, rgba(70,78,90,0.98) 0%, rgba(45,52,62,0.98) 50%, rgba(30,36,44,0.98) 100%) !important;
-        color: {btn_txt} !important;
-        border: 1px solid transparent !important;
+        font-size: 1.15rem !important;
+        padding: 0.85rem 1.5rem !important;
+        min-height: 3rem !important;
+        background: linear-gradient(180deg, #7eb3f0 0%, #99d0ff 18%, #6ba3e0 35%, #3d7ab8 55%, #2568a0 75%, #2d6a9f 100%) !important;
+        color: #ffffff !important;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.3), 0 0 8px rgba(255,255,255,0.2) !important;
+        border: 1px solid rgba(100,160,220,0.5) !important;
         border-radius: 12px !important;
         font-weight: bold !important;
         letter-spacing: 0.02em !important;
         text-align: center !important;
-        box-shadow: 0 0 18px rgba(91,155,213,0.25),
-                    6px 8px 20px rgba(0,0,0,0.5),
-                    3px 4px 12px rgba(0,0,0,0.4),
-                    inset 0 1px 0 rgba(255,255,255,0.1) !important;
+        box-shadow: inset 0 2px 6px rgba(255,255,255,0.4),
+                    inset 0 -3px 6px rgba(0,0,0,0.3),
+                    0 4px 12px rgba(0,0,0,0.4) !important;
         transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+        text-decoration: none !important;
     }}
+    .stApp [data-testid="stButton"] > button:hover,
+    .stApp [data-testid="stFormSubmitButton"] > button:hover,
+    .stApp [data-testid="stDownloadButton"] > button:hover,
+    .stApp [data-testid="stDownloadButton"] a:hover,
+    .stApp [data-testid="stFileUploader"] [data-testid="stButton"] > button:hover,
+    .stApp [data-testid="stFileUploader"] button:hover,
+    .stApp [data-testid="stFileUploader"] a:hover,
+    .stApp [data-testid="stFileUploader"] [role="button"]:hover,
     .main .stButton > button:hover,
     .main form [data-testid="stFormSubmitButton"] > button:hover,
-    .main [data-testid="stDownloadButton"] > button:hover {{
-        background: linear-gradient(180deg, rgba(80,88,100,0.98) 0%, rgba(55,62,72,0.98) 50%, rgba(40,46,54,0.98) 100%) !important;
+    .main [data-testid="stDownloadButton"] > button:hover,
+    .main [data-testid="stExpander"] .stButton > button:hover,
+    .main [data-testid="stExpander"] [data-testid="stVerticalBlock"] .stButton > button:hover,
+    .main [data-testid="stExpander"] [data-testid="stDownloadButton"] > button:hover,
+    .main [data-testid="stFileUploader"] [data-testid="stButton"] > button:hover,
+    .main [data-testid="stFileUploader"] button:hover,
+    .main [data-testid="stFileUploader"] a:hover,
+    .main [data-testid="stFileUploader"] [role="button"]:hover,
+    .main [data-testid="column"] [data-testid="stButton"] > button:hover {{
+        background: linear-gradient(180deg, #8ec5ff 0%, #a8dcff 18%, #7eb3f0 35%, #4a8ac8 55%, #2d78b0 75%, #3a7ab8 100%) !important;
         transform: translateY(-3px) !important;
-        box-shadow: 0 0 24px rgba(91,155,213,0.35),
-                    8px 12px 28px rgba(0,0,0,0.55),
-                    4px 6px 16px rgba(0,0,0,0.45),
-                    inset 0 1px 0 rgba(255,255,255,0.15) !important;
+        box-shadow: inset 0 2px 4px rgba(255,255,255,0.4),
+                    inset 0 -2px 4px rgba(0,0,0,0.2),
+                    0 6px 20px rgba(0,0,0,0.5),
+                    0 0 16px rgba(100,160,220,0.35) !important;
     }}
+    .stApp [data-testid="stButton"] > button:active,
+    .stApp [data-testid="stFormSubmitButton"] > button:active,
+    .stApp [data-testid="stDownloadButton"] > button:active,
+    .stApp [data-testid="stDownloadButton"] a:active,
+    .stApp [data-testid="stFileUploader"] [data-testid="stButton"] > button:active,
+    .stApp [data-testid="stFileUploader"] button:active,
+    .stApp [data-testid="stFileUploader"] a:active,
+    .stApp [data-testid="stFileUploader"] [role="button"]:active,
     .main .stButton > button:active,
     .main form [data-testid="stFormSubmitButton"] > button:active,
-    .main [data-testid="stDownloadButton"] > button:active {{
+    .main [data-testid="stDownloadButton"] > button:active,
+    .main [data-testid="stExpander"] .stButton > button:active,
+    .main [data-testid="stExpander"] [data-testid="stVerticalBlock"] .stButton > button:active,
+    .main [data-testid="stExpander"] [data-testid="stDownloadButton"] > button:active,
+    .main [data-testid="stFileUploader"] [data-testid="stButton"] > button:active,
+    .main [data-testid="stFileUploader"] button:active,
+    .main [data-testid="stFileUploader"] a:active,
+    .main [data-testid="stFileUploader"] [role="button"]:active,
+    .main [data-testid="column"] [data-testid="stButton"] > button:active {{
         transform: translateY(1px) !important;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.5), inset 0 2px 4px rgba(0,0,0,0.3) !important;
+        box-shadow: inset 0 3px 6px rgba(0,0,0,0.35),
+                    0 2px 6px rgba(0,0,0,0.4) !important;
     }}
     div[data-testid="stVerticalBlock"] > div {{
         background-color: transparent !important;
         border-radius: 10px !important;
-        padding: 0.6rem 0.4rem !important;
+        padding: 0.35rem 0.25rem !important;
         box-shadow: 0 4px 15px rgba(0,0,0,0.15) !important;
     }}
     .big-label {{
@@ -2473,27 +3078,92 @@ def main():
     .main div[data-testid="stDataFrame"] *, .main [data-testid="stDataFrame"] td, .main [data-testid="stDataFrame"] th {{
         color: {txt_main} !important;
     }}
-    /* Menú lateral última generación */
+    /* Menú lateral: ordenado, centrado, profesional */
     section[data-testid="stSidebar"] {{
         background: {sidebar_bg} !important;
         box-shadow: 4px 0 24px rgba(0,0,0,0.4) !important;
+        padding: 0.5rem 0.6rem !important;
+    }}
+    section[data-testid="stSidebar"] .block-container {{
+        padding: 0.25rem 0.35rem !important;
+        max-width: 100% !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{
+        width: 100% !important;
+        max-width: 100% !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div {{
+        padding: 0.25rem 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+    }}
+    section[data-testid="stSidebar"] hr {{
+        margin: 0.4rem 0 !important;
+        border-color: {sidebar_txt_muted} !important;
+        opacity: 0.5;
+    }}
+    section[data-testid="stSidebar"] div[data-testid="stImage"] {{
+        display: flex !important;
+        justify-content: center !important;
+        align-items: center !important;
+        width: 100% !important;
+        padding: 0.4rem 0.25rem !important;
+        margin: 0.2rem 0 !important;
+        border: 1px solid {sidebar_txt_muted} !important;
+        border-radius: 10px !important;
+        background: rgba(0,0,0,0.15) !important;
+        box-sizing: border-box !important;
     }}
     section[data-testid="stSidebar"] div[data-testid="stImage"] img {{
-        max-height: 120px !important;
+        max-height: 100px !important;
+        max-width: 100% !important;
         width: auto !important;
+        height: auto !important;
         object-fit: contain !important;
     }}
     section[data-testid="stSidebar"] .stRadio > label,
     section[data-testid="stSidebar"] .stSelectbox label,
     section[data-testid="stSidebar"] label {{
-        font-size: 0.9rem !important;
+        font-size: 0.85rem !important;
         color: {sidebar_txt} !important;
+        text-align: left !important;
+        width: 100% !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stSelectbox"] > div,
+    section[data-testid="stSidebar"] [data-testid="stRadio"] > div {{
+        width: 100% !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stSelectbox"] {{
+        width: 100% !important;
+        padding: 0.4rem 0.45rem !important;
+        margin: 0.25rem 0 !important;
+        background: rgba(0,0,0,0.35) !important;
+        border-radius: 10px !important;
+        box-shadow: inset 0 3px 10px rgba(0,0,0,0.5),
+                    inset 0 -2px 4px rgba(0,0,0,0.2),
+                    inset 0 1px 0 rgba(255,255,255,0.02) !important;
+        border: 1px solid rgba(0,0,0,0.4) !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] {{
+        width: 100% !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stTextInput"] {{
+        padding: 0.35rem 0 !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stTextInput"] input {{
+        width: 100% !important;
+        box-sizing: border-box !important;
+        background: rgba(0,0,0,0.4) !important;
+        box-shadow: inset 0 3px 8px rgba(0,0,0,0.5),
+                    inset 0 -2px 4px rgba(0,0,0,0.2) !important;
+        border: 1px solid rgba(0,0,0,0.4) !important;
+        border-radius: 8px !important;
     }}
     .menu-item {{
         display: block;
         width: 100%;
-        padding: 1rem 1.2rem;
-        margin: 0.35rem 0;
+        padding: 0.6rem 0.9rem;
+        margin: 0.2rem 0;
         border-radius: 12px;
         font-family: Calibri, 'Segoe UI', sans-serif !important;
         font-size: 1.1rem !important;
@@ -2519,44 +3189,100 @@ def main():
         box-shadow: 0 4px 20px rgba(0,0,0,0.35);
     }}
     .menu-seccion {{
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         color: {sidebar_txt_muted};
         text-transform: uppercase;
-        letter-spacing: 0.12em;
-        margin: 1.2rem 0 0.5rem 0;
-        padding-left: 0.5rem;
+        letter-spacing: 0.08em;
+        margin: 0.35rem 0 0.2rem 0;
+        padding: 0.35rem 0.5rem;
+        text-align: center !important;
+        width: 100%;
+        max-width: 100%;
+        display: block;
+        box-sizing: border-box;
+        line-height: 1.3;
+    }}
+    .menu-ministerio {{
+        font-size: 1.05rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.14em !important;
+        text-align: center !important;
+        margin: 0 0 0.3rem 0 !important;
+        padding: 0.3rem 0.4rem !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+        color: #c8d0d8 !important;
+        text-shadow: 0 0 8px rgba(192,210,230,0.6),
+                     0 0 2px rgba(255,255,255,0.4),
+                     0 1px 3px rgba(0,0,0,0.4) !important;
     }}
     section[data-testid="stSidebar"] .stButton > button {{
         width: 100% !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        padding: 1rem 1.2rem !important;
-        border-radius: 12px !important;
+        padding: 0.5rem 0.65rem !important;
+        min-height: 2.4rem !important;
+        border-radius: 10px !important;
         font-family: Calibri, 'Segoe UI', sans-serif !important;
-        font-size: 1.05rem !important;
+        font-size: 0.95rem !important;
         font-weight: bold !important;
-        background: linear-gradient(180deg, rgba(55,65,78,0.9) 0%, rgba(35,42,52,0.9) 50%, rgba(25,30,38,0.9) 100%) !important;
-        color: {sidebar_txt} !important;
-        border: 1px solid transparent !important;
+        color: #ffffff !important;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.4) !important;
+        border: 1px solid rgba(100,160,220,0.5) !important;
         text-align: center !important;
         transition: transform 0.2s ease, box-shadow 0.2s ease !important;
-        box-shadow: 0 0 12px rgba(91,155,213,0.2),
-                    4px 6px 14px rgba(0,0,0,0.45),
-                    2px 4px 8px rgba(0,0,0,0.35),
-                    inset 0 1px 0 rgba(255,255,255,0.08) !important;
+        background: linear-gradient(180deg, #6ba3e0 0%, #3d7ab8 30%, #2568a0 60%, #2d6a9f 100%) !important;
+        box-shadow: inset 0 2px 4px rgba(255,255,255,0.35),
+                    inset 0 -3px 6px rgba(0,0,0,0.35),
+                    0 3px 8px rgba(0,0,0,0.4) !important;
     }}
     section[data-testid="stSidebar"] .stCaption,
     section[data-testid="stSidebar"] [data-testid="stMarkdown"] {{
         color: {sidebar_txt} !important;
+        text-align: center !important;
+        width: 100% !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="column"] {{
+        min-width: 0 !important;
+        flex: 1 1 0 !important;
+        padding: 0 0.2rem !important;
+    }}
+    section[data-testid="stSidebar"] .stRadio [role="radiogroup"] {{
+        display: flex !important;
+        justify-content: center !important;
+        align-items: center !important;
+        gap: 0.5rem !important;
+        padding: 0.45rem 0.55rem !important;
+        background: rgba(0,0,0,0.35) !important;
+        border-radius: 10px !important;
+        box-shadow: inset 0 3px 10px rgba(0,0,0,0.5),
+                    inset 0 -2px 5px rgba(0,0,0,0.25),
+                    inset 0 1px 0 rgba(255,255,255,0.02) !important;
+        border: 1px solid rgba(0,0,0,0.4) !important;
+    }}
+    section[data-testid="stSidebar"] .stRadio label {{
+        margin: 0 !important;
+    }}
+    section[data-testid="stSidebar"] .stButton > button {{
+        text-align: center !important;
+        line-height: 1.2 !important;
     }}
     section[data-testid="stSidebar"] .stButton > button:hover {{
-        background: linear-gradient(180deg, rgba(65,75,88,0.95) 0%, rgba(45,52,62,0.95) 50%, rgba(35,40,48,0.95) 100%) !important;
-        transform: translateX(4px) translateY(-2px) !important;
-        box-shadow: 0 0 18px rgba(91,155,213,0.3),
-                    5px 8px 18px rgba(0,0,0,0.55),
-                    3px 5px 10px rgba(0,0,0,0.45),
-                    inset 0 1px 0 rgba(255,255,255,0.12) !important;
+        background: linear-gradient(180deg, #7eb3f0 0%, #4a8ac8 30%, #2d78b0 60%, #3a7ab8 100%) !important;
+        transform: translateX(3px) translateY(-1px) !important;
+        box-shadow: inset 0 2px 4px rgba(255,255,255,0.45),
+                    inset 0 -2px 4px rgba(0,0,0,0.25),
+                    0 4px 12px rgba(0,0,0,0.45),
+                    0 0 12px rgba(100,160,220,0.3) !important;
+    }}
+    @media (max-width: 768px) {{
+        section[data-testid="stSidebar"] {{ padding: 0.25rem 0.35rem !important; }}
+        section[data-testid="stSidebar"] div[data-testid="stImage"] {{ padding: 0.3rem 0.2rem !important; }}
+        section[data-testid="stSidebar"] div[data-testid="stImage"] img {{ max-height: 85px !important; max-width: 100% !important; }}
+        section[data-testid="stSidebar"] .stButton > button {{ padding: 0.45rem 0.5rem !important; min-height: 2.2rem !important; font-size: 0.9rem !important; }}
+        section[data-testid="stSidebar"] hr {{ margin: 0.25rem 0 !important; }}
     }}
     </style>
     """, unsafe_allow_html=True)
@@ -2610,20 +3336,13 @@ def main():
     lista_usuarios = list(data_permisos.get("usuarios", {}).keys()) or ["admin"]
 
     with st.sidebar:
-        st.markdown(f"<p class='menu-seccion' style='text-align:center; margin-bottom:0.3rem;'>{t['ministerio_finanzas']}</p>", unsafe_allow_html=True)
+        # Encabezado compacto
+        st.markdown(f"<p class='menu-ministerio'>{t['ministerio_finanzas']}</p>", unsafe_allow_html=True)
         if os.path.exists(LOGO_PRINCIPAL):
             st.image(LOGO_PRINCIPAL, use_container_width=True)
         st.markdown("---")
-        lang = st.radio(
-            t["idioma"],
-            options=["ES", "EN"],
-            format_func=lambda x: "ESPAÑOL" if x == "ES" else "ENGLISH",
-            key="idioma"
-        )
-        t = TEXTOS[lang]
-        ministerios = MINISTERIOS if lang == "ES" else MINISTERIOS_EN
-        st.markdown("---")
-        st.markdown(f"<p class='menu-seccion'>{t['usuario_actual_menu']}</p>", unsafe_allow_html=True)
+        # Usuario primero (quién usa la app) — decisión principal
+        st.markdown(f"<p class='menu-seccion' style='text-align:center;'>{t['usuario_actual_menu']}</p>", unsafe_allow_html=True)
         sel_usuario = st.selectbox(
             t["quien_usa_app"],
             options=lista_usuarios,
@@ -2631,17 +3350,16 @@ def main():
             format_func=lambda uid: data_permisos["usuarios"].get(uid, {}).get("nombre", uid),
             key="sel_usuario"
         )
-        # Si eligió admin pero hace falta PIN, no cambiar usuario hasta que lo ingrese
         if sel_usuario != usuario_actual:
             if sel_usuario == "admin" and _pin_admin_requerido() and not st.session_state.get("admin_autorizado"):
-                pass  # mostrar formulario PIN abajo
+                pass
             else:
                 st.session_state["usuario_actual"] = sel_usuario
                 if sel_usuario != "admin":
                     st.session_state["admin_autorizado"] = False
-                st.session_state["sidebar_state"] = "expanded"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
-        # PIN de administrador
         if sel_usuario == "admin" and _pin_admin_requerido() and not st.session_state.get("admin_autorizado"):
             pin_ingresado = st.text_input(t["pin_ingrese"], type="password", key="pin_admin_input")
             if st.button(t["entrar"], key="btn_pin_entrar") and pin_ingresado:
@@ -2652,67 +3370,116 @@ def main():
                     st.rerun()
                 else:
                     st.error(t["pin_incorrecto"])
-        # Cerrar sesión: vuelve a la pantalla de login
+        st.markdown("---")
+        # Navegación: orden por frecuencia de uso (Inicio → operaciones diarias → reportes → admin)
+        st.markdown(f"<p class='menu-seccion' style='text-align:center;'>{t['menu_navegacion']}</p>", unsafe_allow_html=True)
+        if tiene_permiso(usuario_actual, "ver_inicio"):
+            if st.button(f"🏠 {t['inicio']}", key="btn_inicio", use_container_width=True):
+                st.session_state["pagina"] = "inicio"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
+                st.rerun()
+        if tiene_permiso(usuario_actual, "ver_arqueo_caja"):
+            if st.button(f"📋 {t['arqueo_caja']}", key="btn_arqueo", use_container_width=True):
+                st.session_state["pagina"] = "arqueo_caja"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
+                st.rerun()
+        if tiene_permiso(usuario_actual, "ver_tesoreria"):
+            if st.button(f"📒 {t['tesoreria']}", key="btn_tesoreria", use_container_width=True):
+                st.session_state["pagina"] = "tesoreria"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
+                st.rerun()
+        if tiene_permiso(usuario_actual, "ver_contabilidad"):
+            if st.button(f"📊 {t['contabilidad']}", key="btn_contabilidad", use_container_width=True):
+                st.session_state["pagina"] = "contabilidad"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
+                st.rerun()
+        if tiene_permiso(usuario_actual, "ver_presupuesto_metas"):
+            if st.button(f"🎯 {t['presupuesto_metas']}", key="btn_presupuesto", use_container_width=True):
+                st.session_state["pagina"] = "presupuesto_metas"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
+                st.rerun()
+        if usuario_actual == "admin":
+            if st.button(f"⚙️ {t['administracion']}", key="btn_admin", use_container_width=True):
+                st.session_state["pagina"] = "administracion"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
+                st.rerun()
+        st.markdown("---")
+        # Modo mantenimiento: solo admin puede pausar/reanudar desde aquí (sin ir a Administración)
+        if usuario_actual == "admin":
+            mant_activo = _mantenimiento_activo()
+            st.markdown(f"<p class='menu-seccion' style='text-align:center;'>⏸️ {t.get('mantenimiento_sidebar', 'Pausar sistema')}</p>", unsafe_allow_html=True)
+            if mant_activo:
+                if st.button(f"▶️ {t.get('mantenimiento_btn_desactivar', 'Reanudar')}", key="sidebar_mant_off", use_container_width=True):
+                    _set_mantenimiento_activo(False)
+                    audit_log(usuario_actual, "mantenimiento_desactivado", "sidebar")
+                    st.rerun()
+            else:
+                if st.button(f"⏸️ {t.get('mantenimiento_btn_activar', 'Pausar (mantenimiento)')}", key="sidebar_mant_on", use_container_width=True):
+                    _set_mantenimiento_activo(True)
+                    audit_log(usuario_actual, "mantenimiento_activado", "sidebar")
+                    st.rerun()
+            st.markdown("---")
+        # Preferencias en fila compacta (idioma + tema)
+        st.markdown("<p class='menu-seccion' style='text-align:center;'>Idioma · Tema</p>", unsafe_allow_html=True)
+        col_idioma, col_tema = st.columns(2)
+        with col_idioma:
+            lang = st.radio(t["idioma"], options=["ES", "EN"], format_func=lambda x: "ES" if x == "ES" else "EN",
+                           key="idioma", horizontal=True, label_visibility="collapsed")
+        t = TEXTOS[lang]
+        ministerios = MINISTERIOS if lang == "ES" else MINISTERIOS_EN
+        with col_tema:
+            tema_sel = st.radio("Tema", [t["tema_oscuro"], t["tema_claro"]], key="sel_tema_app", horizontal=True,
+                                index=0 if st.session_state.get("tema_app") == "oscuro" else 1,
+                                format_func=lambda x: "🌙" if "oscuro" in x.lower() or "dark" in x.lower() else "☀️",
+                                label_visibility="collapsed")
+        nuevo_tema = "claro" if tema_sel == t["tema_claro"] else "oscuro"
+        if nuevo_tema != st.session_state.get("tema_app"):
+            st.session_state["tema_app"] = nuevo_tema
+            st.rerun()
+        tamano_fuente = st.selectbox(t["tamano_texto"], [t["tamano_normal"], t["tamano_grande"]], key="sel_tamano_fuente",
+                                     index=0 if st.session_state.get("tamano_fuente") != "grande" else 1)
+        nuevo_tamano = "grande" if tamano_fuente == t["tamano_grande"] else "normal"
+        if nuevo_tamano != st.session_state.get("tamano_fuente"):
+            st.session_state["tamano_fuente"] = nuevo_tamano
+            st.rerun()
+        st.markdown("---")
+        # Cerrar sesión al final (zona de salida, flujo natural)
         if st.button(f"🚪 {t['cerrar_sesion']}", key="btn_cerrar_sesion", use_container_width=True):
             audit_log(usuario_actual, "cerrar_sesion", "")
             st.session_state["logueado"] = False
             st.session_state["admin_autorizado"] = False
             st.session_state["sidebar_state"] = "collapsed"
+            st.session_state["sidebar_collapse_requested"] = True
             st.rerun()
-        st.markdown("---")
-        st.markdown(f"<p class='menu-seccion'>{t['menu_navegacion']}</p>", unsafe_allow_html=True)
-        if tiene_permiso(usuario_actual, "ver_inicio"):
-            if st.button(f"🏠 {t['inicio']}", key="btn_inicio", use_container_width=True):
-                st.session_state["pagina"] = "inicio"
-                st.session_state["sidebar_state"] = "expanded"
-                st.rerun()
-        if tiene_permiso(usuario_actual, "ver_arqueo_caja"):
-            if st.button(f"📋 {t['arqueo_caja']}", key="btn_arqueo", use_container_width=True):
-                st.session_state["pagina"] = "arqueo_caja"
-                st.session_state["sidebar_state"] = "expanded"
-                st.rerun()
-        if tiene_permiso(usuario_actual, "ver_tesoreria"):
-            if st.button(f"📒 {t['tesoreria']}", key="btn_tesoreria", use_container_width=True):
-                st.session_state["pagina"] = "tesoreria"
-                st.session_state["sidebar_state"] = "expanded"
-                st.rerun()
-        if tiene_permiso(usuario_actual, "ver_contabilidad"):
-            if st.button(f"📊 {t['contabilidad']}", key="btn_contabilidad", use_container_width=True):
-                st.session_state["pagina"] = "contabilidad"
-                st.session_state["sidebar_state"] = "expanded"
-                st.rerun()
-        if tiene_permiso(usuario_actual, "ver_presupuesto_metas"):
-            if st.button(f"🎯 {t['presupuesto_metas']}", key="btn_presupuesto", use_container_width=True):
-                st.session_state["pagina"] = "presupuesto_metas"
-                st.session_state["sidebar_state"] = "expanded"
-                st.rerun()
-        if usuario_actual == "admin":
-            if st.button(f"⚙️ {t['administracion']}", key="btn_admin", use_container_width=True):
-                st.session_state["pagina"] = "administracion"
-                st.session_state["sidebar_state"] = "expanded"
-                st.rerun()
-        tamano_fuente = st.selectbox(t["tamano_texto"], [t["tamano_normal"], t["tamano_grande"]], key="sel_tamano_fuente", index=0 if st.session_state.get("tamano_fuente") != "grande" else 1)
-        nuevo_tamano = "grande" if tamano_fuente == t["tamano_grande"] else "normal"
-        if nuevo_tamano != st.session_state.get("tamano_fuente"):
-            st.session_state["tamano_fuente"] = nuevo_tamano
-            st.session_state["sidebar_state"] = "expanded"
-            st.rerun()
-        tema_sel = st.radio("Tema", [t["tema_oscuro"], t["tema_claro"]], key="sel_tema_app", horizontal=True,
-                            index=0 if st.session_state.get("tema_app") == "oscuro" else 1,
-                            format_func=lambda x: "🌙 " + x if "oscuro" in x.lower() or "dark" in x.lower() else "☀️ " + x)
-        nuevo_tema = "claro" if tema_sel == t["tema_claro"] else "oscuro"
-        if nuevo_tema != st.session_state.get("tema_app"):
-            st.session_state["tema_app"] = nuevo_tema
-            st.session_state["sidebar_state"] = "expanded"
-            st.rerun()
-        st.markdown("---")
         st.caption(f"{t['version']} {VERSION_APP}")
+
+    # ----- AVISO MODO MANTENIMIENTO: no-admin solo ven el aviso (congelados), admin/maestro sigue trabajando -----
+    usuario_actual = st.session_state.get("usuario_actual", "")
+    es_admin_o_maestro = (usuario_actual == "admin") or st.session_state.get("es_acceso_maestro", False)
+    if not es_admin_o_maestro and _mantenimiento_activo():
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #1e3a5f 0%, #2d4a6f 100%); border: 2px solid #3b82f6; border-radius: 10px; padding: 1.5rem 1.5rem; margin: 2rem 0;">
+        <p style="color: #93c5fd; margin: 0; font-weight: bold; font-size: 1.2rem;">⏸️ {t.get('mantenimiento_titulo', 'Sistema en actualización')}</p>
+        <p style="color: #bfdbfe; margin: 0.75rem 0 0 0; font-size: 1rem; line-height: 1.5;">{t.get('mantenimiento_aviso', 'El administrador está realizando actualizaciones. Evite ingresar datos nuevos mientras vea este aviso. Si cierra y vuelve a abrir, podrá continuar; su trabajo guardado se mantiene visible.')}</p>
+        <p style="color: #93c5fd; margin: 1rem 0 0 0; font-size: 0.9rem;">{t.get('mantenimiento_esperar', 'Cuando el administrador desactive el mantenimiento, recargue la página para continuar. Lo que ya guardó no se pierde.')}</p>
+        <p style="color: #93c5fd; margin: 0.75rem 0 0 0; font-size: 0.9rem;">{t.get('mantenimiento_guardado_visible', 'Lo que guardó sigue guardado y lo verá al reanudar el sistema.')}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        return
 
     # ----- CONTENIDO PRINCIPAL SEGÚN PÁGINA -----
     if st.session_state["pagina"] == "administracion":
         # Estilo: casillas pequeñas, verde = tiene permiso, rojo = no tiene (colores según tema)
         st.markdown(f"""
         <style>
+        /* Permisos: 5 columnas por fila, ocupan todo el ancho sin huecos vacíos */
+        .main [data-testid="stExpander"] [data-testid="column"] {{ min-width: 0 !important; flex: 1 1 0 !important; padding: 0.2rem !important; }}
         /* Cuadraditos de permisos: marcado verde, desmarcado rojo */
         div[data-testid="stCheckbox"] > label {{
             padding: 0.35rem 0.5rem !important;
@@ -2735,13 +3502,52 @@ def main():
             width: 1.1rem !important; height: 1.1rem !important;
             accent-color: {checkbox_checked_border} !important;
         }}
+        @media (max-width: 768px) {{
+            .main [data-testid="stExpander"] [data-testid="column"] {{ padding: 0.15rem !important; }}
+        }}
         </style>
         """, unsafe_allow_html=True)
         st.markdown(f"## ⚙️ {t['administracion_titulo']}")
         st.markdown(t["admin_instrucciones"])
-        st.markdown("")
+
+        # --- Modo mantenimiento (pausar sistema para actualizaciones) ---
+        mant_activo = _mantenimiento_activo()
+        with st.expander(f"⏸️ {t.get('mantenimiento_expander', 'Pausar sistema (mantenimiento)')}", expanded=mant_activo):
+            st.caption(t.get("mantenimiento_ayuda", "Al activar, los demás usuarios verán un aviso de que el sistema está en actualización. Pueden cerrar y volver; su trabajo guardado se mantiene. Desactive cuando termine el mantenimiento."))
+            if mant_activo:
+                if st.button(f"▶️ {t.get('mantenimiento_btn_desactivar', 'Reanudar sistema')}", key="btn_mant_desactivar"):
+                    _set_mantenimiento_activo(False)
+                    audit_log(usuario_actual, "mantenimiento_desactivado", "")
+                    st.success(t.get("mantenimiento_desactivado_ok", "Sistema reanudado. Los usuarios ya no verán el aviso."))
+                    st.rerun()
+                st.caption(f"🟠 {t.get('mantenimiento_activo_ahora', 'Modo mantenimiento activo.')}")
+            else:
+                if st.button(f"⏸️ {t.get('mantenimiento_btn_activar', 'Pausar sistema (mostrar aviso a usuarios)')}", key="btn_mant_activar"):
+                    _set_mantenimiento_activo(True)
+                    audit_log(usuario_actual, "mantenimiento_activado", "")
+                    st.success(t.get("mantenimiento_activado_ok", "Aviso de mantenimiento activado. Los usuarios verán el mensaje al entrar."))
+                    st.rerun()
+
         data_permisos = cargar_permisos()
         usuarios = data_permisos.get("usuarios", {})
+
+        # --- Resumen de permisos (matriz) ---
+        with st.expander(f"📊 {t.get('admin_resumen_permisos', 'RESUMEN DE PERMISOS')}", expanded=False):
+            permisos_lista_resumen = list(PERMISOS_DISPONIBLES)
+            header = "| Usuario |" + "|".join([e[:12] for _, e in permisos_lista_resumen]) + "|"
+            sep = "|---|" + "|".join(["---" for _ in permisos_lista_resumen]) + "|"
+            filas_md = [header, sep]
+            for uid_r, info_r in usuarios.items():
+                perms_r = set(info_r.get("permisos", []))
+                todo = "*" in perms_r
+                nombre_r = info_r.get("nombre", uid_r)[:15]
+                celdas = []
+                for pk, _ in permisos_lista_resumen:
+                    celdas.append("✅" if todo or pk in perms_r else "❌")
+                filas_md.append(f"| **{nombre_r}** |" + "|".join(celdas) + "|")
+            st.markdown("\n".join(filas_md))
+
+        # --- Añadir usuario ---
         with st.expander(t["admin_anadir_usuario"], expanded=False):
             col_a, col_b = st.columns(2)
             with col_a:
@@ -2756,6 +3562,21 @@ def main():
                         st.session_state["usuario_recien_anadido"] = nuevo_id
                         st.success(t["admin_usuario_anadido"].format(nombre=nuevo_nombre or nuevo_id))
                         st.rerun()
+
+        # --- Descargar permisos (respaldo JSON) ---
+        with st.expander(f"💾 {t.get('admin_descargar_permisos', 'Descargar permisos')}", expanded=False):
+            try:
+                permisos_json = json.dumps(data_permisos, indent=2, ensure_ascii=False)
+                st.download_button(
+                    label=t.get("admin_descargar_permisos", "Descargar permisos (JSON)"),
+                    data=permisos_json,
+                    file_name=f"DB_PERMISOS_respaldo_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+                    mime="application/json",
+                    key="btn_descargar_permisos"
+                )
+            except Exception:
+                st.caption("Error al preparar respaldo.")
+
         st.markdown("---")
         data_permisos = cargar_permisos()
         usuarios = data_permisos.get("usuarios", {})
@@ -2763,18 +3584,87 @@ def main():
         if usuario_recien_anadido and usuario_recien_anadido in usuarios:
             nombre_show = usuarios[usuario_recien_anadido].get("nombre", usuario_recien_anadido)
             st.info("✅ " + t["admin_asignar_permisos"].format(nombre=nombre_show))
+
+        # Perfiles predefinidos para plantillas
+        _perfiles_plantilla = {
+            "Tesorero": ["ver_inicio", "ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"],
+            "Pastor": ["ver_inicio", "ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad", "ver_presupuesto_metas", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"],
+            "Asistente": ["ver_inicio", "ver_arqueo_caja"],
+            "Ministerio": ["ver_inicio", "ver_arqueo_caja", "ver_hoja_contable", "ver_informe_pdf"],
+        }
+
         for uid, info in usuarios.items():
             nombre = info.get("nombre", uid)
             permisos_usuario = set(info.get("permisos", []))
             es_admin = "*" in permisos_usuario or uid == "admin"
             expandir = not es_admin or uid == usuario_recien_anadido
-            with st.expander(f"**{nombre}** ({uid})" + (t["admin_expander_admin"] if es_admin else ""), expanded=expandir):
+            # Indicador sin contraseña + última actividad
+            _tiene_pwd = bool((info.get("contrasena") or "").strip())
+            _ult_fecha, _ult_accion = ultima_actividad_usuario(uid)
+            badge = ""
+            if not es_admin and not _tiene_pwd:
+                badge += f" {t.get('admin_sin_contrasena', '⚠️ Sin contraseña')}"
+            if _ult_fecha:
+                badge += f" | {t.get('admin_ultima_actividad', 'Última actividad')}: {_ult_fecha[:16]}"
+            with st.expander(f"**{nombre}** ({uid})" + (t["admin_expander_admin"] if es_admin else "") + badge, expanded=expandir):
                 if es_admin:
                     st.caption(t["admin_caption_admin"])
                 else:
+                    # Persona responsable
+                    resp = info.get("responsable", {}) or {}
+                    st.markdown(f"**{t['admin_responsable_titulo']}**")
+                    col_r1, col_r2, col_r3 = st.columns([2, 2, 1])
+                    with col_r1:
+                        resp_nombre = st.text_input(t["admin_responsable_nombre"], value=resp.get("nombre_completo", ""), key=f"resp_nombre_{uid}", max_chars=80, label_visibility="collapsed", placeholder=t["admin_responsable_nombre"])
+                    with col_r2:
+                        resp_licencia = st.text_input(t["admin_responsable_licencia"], value=resp.get("licencia_or_id", ""), key=f"resp_licencia_{uid}", max_chars=50, label_visibility="collapsed", placeholder=t["admin_responsable_licencia"])
+                    with col_r3:
+                        btn_resp = st.button(t["admin_guardar_responsable"], key=f"btn_resp_{uid}", use_container_width=True)
+                    if btn_resp:
+                        data_p = cargar_permisos()
+                        if uid in data_p.get("usuarios", {}):
+                            if "responsable" not in data_p["usuarios"][uid]:
+                                data_p["usuarios"][uid]["responsable"] = {}
+                            data_p["usuarios"][uid]["responsable"]["nombre_completo"] = (resp_nombre or "").strip()
+                            data_p["usuarios"][uid]["responsable"]["licencia_or_id"] = (resp_licencia or "").strip()
+                            if guardar_permisos(data_p, t):
+                                audit_log(usuario_actual, "responsable_actualizado", f"{uid}: {resp_nombre or '-'}")
+                                st.success(t["admin_responsable_guardado"])
+                                st.rerun()
+                    if resp.get("nombre_completo") or resp.get("licencia_or_id"):
+                        st.caption(f"✓ {resp.get('nombre_completo', '-')} | {t['admin_responsable_licencia']}: {resp.get('licencia_or_id', '-')}")
+                    st.markdown("---")
+
+                    # Plantilla de permisos + copiar de otro usuario
+                    col_pl, col_cp = st.columns(2)
+                    with col_pl:
+                        perfil_sel = st.selectbox(t.get("admin_plantilla", "Aplicar perfil"), options=[""] + list(_perfiles_plantilla.keys()), key=f"perfil_{uid}", help=t.get("admin_plantilla_ayuda", ""))
+                        if perfil_sel and st.button(f"✓ {t.get('admin_plantilla', 'Aplicar')}", key=f"btn_perfil_{uid}"):
+                            data_p = cargar_permisos()
+                            if uid in data_p.get("usuarios", {}):
+                                data_p["usuarios"][uid]["permisos"] = list(_perfiles_plantilla[perfil_sel])
+                                if guardar_permisos(data_p, t):
+                                    audit_log(usuario_actual, "perfil_aplicado", f"{uid} -> {perfil_sel}")
+                                    st.rerun()
+                    with col_cp:
+                        otros = [u for u in usuarios if u != uid and u != "admin"]
+                        if otros:
+                            copiar_de = st.selectbox(t.get("admin_copiar_permisos", "Copiar de"), options=[""] + otros, format_func=lambda x: usuarios.get(x, {}).get("nombre", x) if x else "—", key=f"copiar_{uid}")
+                            if copiar_de and st.button(f"📋 {t.get('admin_copiar_permisos', 'Copiar')}", key=f"btn_copiar_{uid}"):
+                                data_p = cargar_permisos()
+                                if uid in data_p.get("usuarios", {}) and copiar_de in data_p.get("usuarios", {}):
+                                    data_p["usuarios"][uid]["permisos"] = list(data_p["usuarios"][copiar_de].get("permisos", []))
+                                    if guardar_permisos(data_p, t):
+                                        audit_log(usuario_actual, "permisos_copiados", f"{copiar_de} -> {uid}")
+                                        st.success(t.get("admin_copiar_ok", "Copiados.").format(origen=usuarios.get(copiar_de, {}).get("nombre", copiar_de)))
+                                        st.rerun()
+                    st.markdown("---")
+
+                    # Permisos: 5 columnas
                     permisos_lista = list(PERMISOS_DISPONIBLES)
-                    for fila in range(0, len(permisos_lista), 4):
-                        cols = st.columns(4)
+                    num_cols = 5
+                    for fila in range(0, len(permisos_lista), num_cols):
+                        cols = st.columns(num_cols)
                         for i, col in enumerate(cols):
                             idx = fila + i
                             if idx >= len(permisos_lista):
@@ -2787,6 +3677,34 @@ def main():
                                 toggle_permiso(uid, permiso_clave, t)
                                 st.rerun()
                     st.caption(t["admin_caption_verde_rojo"])
+
+                    # Eliminar usuario (nunca admin)
+                    st.markdown("---")
+                    if st.session_state.get(f"confirmar_eliminar_{uid}"):
+                        st.warning(t.get("admin_confirmar_eliminar", "Escriba ELIMINAR para confirmar."))
+                        conf_el = st.text_input("", key=f"input_eliminar_{uid}", placeholder="ELIMINAR" if lang == "ES" else "DELETE")
+                        col_el1, col_el2 = st.columns(2)
+                        with col_el1:
+                            if st.button("✓", key=f"btn_conf_eliminar_{uid}"):
+                                palabra = "ELIMINAR" if lang == "ES" else "DELETE"
+                                if (conf_el or "").strip().upper() == palabra:
+                                    data_p = cargar_permisos()
+                                    if uid in data_p.get("usuarios", {}):
+                                        del data_p["usuarios"][uid]
+                                        if guardar_permisos(data_p, t):
+                                            audit_log(usuario_actual, "usuario_eliminado", uid)
+                                            st.success(t.get("admin_usuario_eliminado", "Eliminado.").format(nombre=nombre))
+                                            st.session_state.pop(f"confirmar_eliminar_{uid}", None)
+                                            st.rerun()
+                        with col_el2:
+                            if st.button("✕", key=f"btn_cancel_eliminar_{uid}"):
+                                st.session_state.pop(f"confirmar_eliminar_{uid}", None)
+                                st.rerun()
+                    else:
+                        if st.button(t.get("admin_eliminar_usuario", "🗑️ Eliminar"), key=f"btn_eliminar_{uid}", use_container_width=True):
+                            st.session_state[f"confirmar_eliminar_{uid}"] = True
+                            st.rerun()
+
                 # Contraseña (todos los usuarios)
                 pwd_nueva = st.text_input(t["admin_contrasena"], value="", type="password", key=f"pwd_{uid}", placeholder=t["admin_contrasena_placeholder"])
                 col_pwd1, col_pwd2 = st.columns(2)
@@ -2820,6 +3738,37 @@ def main():
                                 audit_log(usuario_actual, "contrasena_reseteada", uid)
                                 st.success("Contraseña restablecida a predeterminada." if lang == "ES" else "Password reset to default.")
                                 st.rerun()
+                # Pregunta de seguridad para recuperar contraseña
+                st.caption(t.get("admin_pregunta_seguridad_titulo", "Pregunta de seguridad (recuperar contraseña)"))
+                preguntas_opciones = ["recuperar_pregunta_1", "recuperar_pregunta_2", "recuperar_pregunta_3", "recuperar_pregunta_4", "recuperar_pregunta_5", "recuperar_pregunta_6"]
+                pregunta_actual = data_permisos.get("usuarios", {}).get(uid, {}).get("pregunta_seguridad", "")
+                idx_sel = preguntas_opciones.index(pregunta_actual) if pregunta_actual in preguntas_opciones else 0
+                pregunta_sel = st.selectbox(
+                    t.get("admin_pregunta_seguridad", "Pregunta"),
+                    options=preguntas_opciones,
+                    format_func=lambda k: t.get(k, k),
+                    index=idx_sel if pregunta_actual in preguntas_opciones else 0,
+                    key=f"pregunta_sel_{uid}",
+                )
+                respuesta_seg = st.text_input(
+                    t.get("recuperar_respuesta", "Respuesta (para recuperar contraseña)"),
+                    value="",
+                    type="password",
+                    key=f"respuesta_seg_{uid}",
+                    placeholder=t.get("admin_respuesta_placeholder", "Solo el admin la conoce"),
+                )
+                if st.button(t.get("admin_guardar_pregunta", "Guardar pregunta y respuesta"), key=f"btn_guardar_pregunta_{uid}"):
+                    if respuesta_seg and respuesta_seg.strip():
+                        data_p = cargar_permisos()
+                        if uid in data_p.get("usuarios", {}):
+                            data_p["usuarios"][uid]["pregunta_seguridad"] = pregunta_sel
+                            data_p["usuarios"][uid]["respuesta_seguridad_hash"] = _hash_contrasena(respuesta_seg.strip())
+                            if guardar_permisos(data_p, t):
+                                audit_log(usuario_actual, "pregunta_seguridad_actualizada", uid)
+                                st.success(t.get("admin_pregunta_guardada", "Pregunta de seguridad guardada."))
+                                st.rerun()
+                    else:
+                        st.warning(t.get("admin_respuesta_requerida", "Escriba la respuesta para guardar."))
         st.markdown("---")
         if usuario_actual == "admin" and ES_PC_MAESTRO:
             with st.expander(f"🔄 {t['reiniciar_tesoreria']}", expanded=False):
@@ -2885,6 +3834,32 @@ def main():
                         audit_log("admin", "pin_actualizado", "")
                     except Exception as e:
                         st.error(str(e))
+        # --- Rastreo de movimientos por usuario (solo clave maestra/universal) ---
+        if st.session_state.get("es_acceso_maestro"):
+            st.markdown("---")
+            with st.expander(f"🔍 {t.get('admin_rastreo_titulo', 'RASTREO DE MOVIMIENTOS')}", expanded=False):
+                st.caption(t.get("admin_rastreo_sub", "Registro de acciones por usuario (solo clave maestra)."))
+                movimientos = movimientos_por_usuario(limite_por_usuario=30)
+                if not movimientos:
+                    st.info(t.get("admin_sin_movimientos", "Sin movimientos registrados."))
+                else:
+                    usuarios_mov = list(movimientos.keys())
+                    filtro_usr = st.selectbox("Usuario", options=["— Todos —"] + usuarios_mov, key="filtro_rastreo_usr")
+                    if filtro_usr == "— Todos —":
+                        uids_mostrar = usuarios_mov
+                    else:
+                        uids_mostrar = [filtro_usr]
+                    for uid_m in uids_mostrar:
+                        nombre_m = usuarios.get(uid_m, {}).get("nombre", uid_m)
+                        st.markdown(f"### {nombre_m} (`{uid_m}`)")
+                        registros = movimientos.get(uid_m, [])
+                        if not registros:
+                            st.caption(t.get("admin_sin_movimientos", "Sin movimientos."))
+                        else:
+                            filas_tabla = []
+                            for fecha_m, accion_m, detalle_m in registros:
+                                filas_tabla.append({"Fecha": fecha_m, "Acción": accion_m, "Detalle": (detalle_m or "")[:80]})
+                            st.dataframe(pd.DataFrame(filas_tabla), use_container_width=True, hide_index=True)
         st.markdown("---")
         if st.button(t["volver_inicio"]):
             st.session_state["pagina"] = "inicio"
@@ -2896,71 +3871,75 @@ def main():
         ruta_imagen = IMAGEN_INICIO_ES if os.path.exists(IMAGEN_INICIO_ES) else (IMAGEN_INICIO_FALLBACK if os.path.exists(IMAGEN_INICIO_FALLBACK) else None)
         if ruta_imagen:
             st.image(ruta_imagen, use_container_width=True)
-        # Estilo: sin bordes, imagen flotando; botones 3D (solo ventana inicio)
-        st.markdown("""
+        # Estilo: sin bordes, imagen flotando; botones respetan tema
+        st.markdown(f"""
         <style>
-        .stApp, [data-testid="stAppViewContainer"], .main, .main .block-container {
+        .stApp, [data-testid="stAppViewContainer"], .main, .main .block-container {{
             border: none !important; outline: none !important; box-shadow: none !important;
-            padding-left: 0 !important; padding-right: 0 !important; padding-top: 0 !important;
+            padding-left: 0.35rem !important; padding-right: 0.35rem !important; padding-top: 0.05rem !important; padding-bottom: 0.35rem !important;
             max-width: 100% !important;
-        }
-        .main .block-container { padding: 0.5rem 0 1.5rem 0 !important; }
-        /* Imagen que sobresale: sin borde gris, sombras oscuras azuladas */
-        .main div[data-testid="stImage"] img, .main .stImage img {
+        }}
+        .main .block-container {{ padding: 0.1rem 0.35rem 0.5rem 0.35rem !important; }}
+        .main div[data-testid="stImage"] img, .main .stImage img {{
             border: none !important;
             outline: none !important;
             box-shadow: 0 12px 40px rgba(8, 20, 45, 0.85),
                         0 6px 20px rgba(10, 25, 55, 0.75),
                         0 3px 12px rgba(5, 15, 40, 0.8),
                         0 0 0 1px rgba(15, 35, 70, 0.3) !important;
-        }
-        .main div[data-testid="stImage"], .main [data-testid="stImage"] {
+        }}
+        .main div[data-testid="stImage"], .main [data-testid="stImage"] {{
             margin: 0 !important;
             padding: 0 !important;
+            margin-top: 0 !important;
             border: none !important;
             outline: none !important;
             box-shadow: none !important;
-        }
-        .main hr { display: none !important; }
-        /* Botones 3D flotantes: Misión, Visión, Objetivo Supremo, Ministerio de Finanzas */
-        .main .stButton > button {
+        }}
+        .main hr {{ display: none !important; }}
+        .main .stButton > button {{
             padding: 1.25rem 1.5rem !important;
             min-height: 100px !important;
             font-size: 1.15rem !important;
             font-weight: bold !important;
-            color: #fff !important;
-            border: 1px solid transparent !important;
+            color: #ffffff !important;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.3) !important;
+            border: 1px solid rgba(100,160,220,0.5) !important;
             border-radius: 12px !important;
-            background: linear-gradient(180deg, rgba(55,65,80,0.98) 0%, rgba(30,38,48,0.98) 50%, rgba(20,26,34,0.98) 100%) !important;
-            box-shadow: 0 0 20px rgba(91,155,213,0.2),
-                        0 8px 20px rgba(0,0,0,0.5),
-                        0 4px 10px rgba(0,0,0,0.4),
-                        inset 0 1px 0 rgba(255,255,255,0.08) !important;
-        }
-        .main .stButton > button:hover {
-            background: linear-gradient(180deg, rgba(65,75,90,0.98) 0%, rgba(40,48,58,0.98) 50%, rgba(28,34,42,0.98) 100%) !important;
-            box-shadow: 0 0 28px rgba(91,155,213,0.35),
-                        0 12px 28px rgba(0,0,0,0.55),
-                        inset 0 1px 0 rgba(255,255,255,0.12) !important;
-        }
-        .main .stButton > button:active {
-            box-shadow: 0 2px 8px rgba(0,0,0,0.5), inset 0 2px 4px rgba(0,0,0,0.3) !important;
-        }
-        /* Móvil: imagen al tamaño de pantalla, botones grandes para tocar */
-        @media (max-width: 768px) {
-            .main div[data-testid="stImage"] img, .main .stImage img {
-                max-height: 50vh !important;
+            background: linear-gradient(180deg, #6ba3e0 0%, #3d7ab8 30%, #2568a0 60%, #2d6a9f 100%) !important;
+            box-shadow: inset 0 2px 4px rgba(255,255,255,0.3),
+                        inset 0 -3px 6px rgba(0,0,0,0.3),
+                        0 4px 12px rgba(0,0,0,0.4) !important;
+        }}
+        .main .stButton > button:hover {{
+            background: linear-gradient(180deg, #7eb3f0 0%, #4a8ac8 30%, #2d78b0 60%, #3a7ab8 100%) !important;
+            transform: translateY(-3px) !important;
+            box-shadow: inset 0 2px 4px rgba(255,255,255,0.4),
+                        inset 0 -2px 4px rgba(0,0,0,0.2),
+                        0 6px 20px rgba(0,0,0,0.5),
+                        0 0 16px rgba(100,160,220,0.35) !important;
+        }}
+        .main .stButton > button:active {{
+            transform: translateY(1px) !important;
+            box-shadow: inset 0 3px 6px rgba(0,0,0,0.35), 0 2px 6px rgba(0,0,0,0.4) !important;
+        }}
+        @media (max-width: 768px) {{
+            .main .block-container {{ padding: 0.05rem 0.25rem 0.35rem 0.25rem !important; }}
+            .main div[data-testid="stImage"] img, .main .stImage img {{
+                max-height: 42vh !important;
                 max-width: 100% !important;
                 width: auto !important;
                 object-fit: contain !important;
-            }
-            .main .stButton > button {
+                margin-bottom: 0.25rem !important;
+            }}
+            .main div[data-testid="stImage"], .main [data-testid="stImage"] {{ margin: 0 0 0.15rem 0 !important; }}
+            .main .stButton > button {{
                 min-height: 48px !important;
-                padding: 0.75rem 1rem !important;
+                padding: 0.6rem 0.8rem !important;
                 font-size: 1rem !important;
-            }
-            .main [data-testid="column"] { min-width: 0 !important; }
-        }
+            }}
+            .main [data-testid="column"] {{ min-width: 0 !important; padding: 0.15rem !important; }}
+        }}
         </style>
         """, unsafe_allow_html=True)
         # Debajo de la imagen: tres botones que al clicar muestran Misión, Visión u Objetivo Supremo
@@ -2994,22 +3973,26 @@ def main():
         with col_a:
             if tiene_permiso(usuario_actual, "ver_arqueo_caja") and st.button(f"📋 {t['arqueo_caja']}", key="btn_ir_arqueo", use_container_width=True):
                 st.session_state["pagina"] = "arqueo_caja"
-                st.session_state["sidebar_state"] = "expanded"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         with col_b:
             if tiene_permiso(usuario_actual, "ver_tesoreria") and st.button(f"📒 {t['tesoreria']}", key="btn_ir_tesoreria", use_container_width=True):
                 st.session_state["pagina"] = "tesoreria"
-                st.session_state["sidebar_state"] = "expanded"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         with col_c:
             if tiene_permiso(usuario_actual, "ver_contabilidad") and st.button(f"📊 {t['contabilidad']}", key="btn_ir_contabilidad", use_container_width=True):
                 st.session_state["pagina"] = "contabilidad"
-                st.session_state["sidebar_state"] = "expanded"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         with col_d:
             if tiene_permiso(usuario_actual, "ver_presupuesto_metas") and st.button(f"🎯 {t['presupuesto_metas']}", key="btn_ir_presupuesto", use_container_width=True):
                 st.session_state["pagina"] = "presupuesto_metas"
-                st.session_state["sidebar_state"] = "expanded"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
         with st.expander(f"❓ {t['primera_vez']}", expanded=False):
             st.caption(t["ayuda_rapida"])
@@ -3033,7 +4016,6 @@ def main():
     if pagina_act == "arqueo_caja":
         st.markdown(f"## 📋 {t['arqueo_caja']}")
         st.caption(t["arqueo_caja_sub"])
-        st.markdown("")
         st.markdown("""<style>
         @media (max-width: 768px) {
         .main input[type="number"],
@@ -3060,7 +4042,6 @@ def main():
                 st.metric(t["gastos_mes"], f"${gas_hoy:,.2f}")
             with c3:
                 st.metric(t["saldo_actual"], f"${ing_hoy - gas_hoy:,.2f}")
-        st.markdown("")
         if tiene_permiso(usuario_actual, "ver_ingresar_bendicion"):
             if st.session_state.get("limpiar_arqueo"):
                 for key in ["b100", "b50", "b20", "b10", "b5", "m2", "m1", "m025", "m010", "m005"]:
@@ -3078,9 +4059,22 @@ def main():
                         st.session_state["verificado_por_arqueo"] = v.upper()
 
                 st.markdown("""<style>
-                .main [data-testid="stTextInput"]:nth-of-type(1) input,
-                .main [data-testid="stTextInput"]:nth-of-type(2) input { text-transform: uppercase !important; }
-                </style>""", unsafe_allow_html=True)
+        .main [data-testid="stTextInput"]:nth-of-type(1) input,
+        .main [data-testid="stTextInput"]:nth-of-type(2) input { text-transform: uppercase !important; }
+        /* Refrescar: metálico azul igual que todos los botones */
+        .main [data-testid="stExpander"] .stButton > button {
+            background: linear-gradient(180deg, #7eb3f0 0%, #99d0ff 18%, #6ba3e0 35%, #3d7ab8 55%, #2568a0 75%, #2d6a9f 100%) !important;
+            color: #ffffff !important;
+            box-shadow: inset 0 2px 6px rgba(255,255,255,0.4), inset 0 -3px 6px rgba(0,0,0,0.3), 0 4px 12px rgba(0,0,0,0.4) !important;
+        }
+        .main [data-testid="stExpander"] .stButton > button:hover {
+            background: linear-gradient(180deg, #8ec5ff 0%, #a8dcff 20%, #7eb3f0 40%, #4a8ac8 60%, #2d78b0 80%, #3a7ab8 100%) !important;
+            transform: translateY(-3px) !important;
+        }
+        .main [data-testid="stExpander"] .stButton > button:active {
+            transform: translateY(1px) !important;
+        }
+        </style>""", unsafe_allow_html=True)
                 meta_arq = cargar_arqueo_meta()
                 nombres_contado, nombres_verificado = _nombres_arqueo_desde_meta(meta_arq)
                 if "contado_por_arqueo" not in st.session_state:
@@ -3449,7 +4443,6 @@ def main():
     if pagina_act == "tesoreria":
         st.markdown(f"## 📒 {t['tesoreria']}")
         st.caption(t["tesoreria_sub"])
-        st.markdown("")
         if tiene_permiso(usuario_actual, "ver_registrar_gasto"):
             MAX_CARACTERES_DESCRIPCION_T = 1000
             _gasto_keys = ["desc_g", "monto_g", "aprobado_por_g", "tipo_gasto_sel", "suministro_sel", "gasto_frecuente_sel", "modo_escaneo_rapido"]
@@ -3753,8 +4746,19 @@ def main():
             .main [data-testid="stExpander"] div[data-testid="stVerticalBlock"] .stButton > button,
             .main [data-testid="stExpander"] [data-testid="stFormSubmitButton"] > button,
             .main .block-container [data-testid="stExpander"] .stButton > button { min-height: 3.2rem !important; padding: 0.9rem 1.6rem !important; font-size: 1.15rem !important; }
+            /* Refrescar y todos los botones en expander: metálico azul */
+            .main [data-testid="stExpander"] .stButton > button {
+                background: linear-gradient(180deg, #7eb3f0 0%, #99d0ff 18%, #6ba3e0 35%, #3d7ab8 55%, #2568a0 75%, #2d6a9f 100%) !important;
+                color: #ffffff !important;
+                box-shadow: inset 0 2px 6px rgba(255,255,255,0.4), inset 0 -3px 6px rgba(0,0,0,0.3), 0 4px 12px rgba(0,0,0,0.4) !important;
+            }
+            .main [data-testid="stExpander"] .stButton > button:hover {
+                background: linear-gradient(180deg, #8ec5ff 0%, #a8dcff 20%, #7eb3f0 40%, #4a8ac8 60%, #2d78b0 80%, #3a7ab8 100%) !important;
+                transform: translateY(-3px) !important;
+            }
+            .main [data-testid="stExpander"] .stButton > button:active { transform: translateY(1px) !important; }
             @media (max-width: 768px) {
-            .main .stButton > button, .main [data-testid="stFormSubmitButton"] > button { min-height: 3.5rem !important; padding: 1rem 1.8rem !important; font-size: 1.2rem !important; }
+            .main .stButton > button, .main [data-testid="stFormSubmitButton"] > button { min-height: 3.5rem !important; padding: 1rem 1.8rem !important; font-size: 1.15rem !important; }
             }
             </style>""", unsafe_allow_html=True)
         return
@@ -3763,18 +4767,23 @@ def main():
     if pagina_act == "presupuesto_metas":
         st.markdown(f"## 🎯 {t['presupuesto_metas']}")
         st.caption(t["presupuesto_metas_sub"])
-        st.markdown("")
         st.info("Espacio de planeación: metas de recaudación, presupuestos por proyecto. (En desarrollo)" if lang == "ES" else "Planning space: fundraising goals, project budgets. (In development)")
         return
 
     # ---------- CONTABILIDAD (Bóveda Histórica) ----------
     st.markdown(f"## 📊 {t['contabilidad']}")
     st.caption(t["contabilidad_sub"])
-    st.markdown("")
     if not df.empty:
         ok_int, msg_int = verificar_integridad_ledger(df)
         if not ok_int:
-            st.warning(f"{t['integridad_aviso']} ({msg_int or ''})")
+            _tit = (t.get("integridad_banner_titulo", "Error de integridad detectado")).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+            _des = (t.get("integridad_banner_deshabilitado", "El borrado está deshabilitado hasta corregir o restaurar.")).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+            st.markdown(f"""<div style="background: linear-gradient(135deg, #4a0e0e 0%, #7a1a1a 100%); border: 2px solid #ff5252; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1rem;">
+            <p style="color: #ffcccc; margin: 0; font-weight: bold;">⚠️ {_tit}</p>
+            <p style="color: #ffb3b3; margin: 0.5rem 0 0 0; font-size: 0.95rem;">{_des}</p>
+            </div>""", unsafe_allow_html=True)
+            st.error(f"**{t.get('integridad_error_titulo', t['integridad_aviso'])}** — {t['integridad_aviso']} ({msg_int or ''})")
+            st.caption("No se recomienda borrar registros hasta restaurar o corregir la integridad." if lang == "ES" else "Do not delete records until integrity is restored or corrected.")
 
     # ---------- DASHBOARD RESUMEN (saldo, ingresos/gastos del mes) ----------
     if tiene_permiso(usuario_actual, "ver_hoja_contable") and not df.empty:
@@ -3798,6 +4807,159 @@ def main():
             st.metric(t["ingresos_mes"], f"${ing_mes:,.2f}")
         with c3:
             st.metric(t["gastos_mes"], f"${gas_mes:,.2f}")
+
+        # ---------- Resumen por período (mes / trimestre / año) ----------
+        with st.expander(f"📅 {t.get('resumen_periodo', 'Resumen por período')}", expanded=False):
+            periodo_sel = st.radio(
+                t.get("resumen_periodo", "Período"),
+                options=["mes", "trimestre", "ano"],
+                format_func=lambda x: t.get(f"periodo_{x}", x),
+                key="contabilidad_periodo_sel",
+                horizontal=True,
+            )
+            hoy = datetime.now().date()
+            if periodo_sel == "mes":
+                inicio = hoy.replace(day=1)
+                fin = hoy
+                prev_fin = inicio - timedelta(days=1)
+                prev_inicio = prev_fin.replace(day=1)
+            elif periodo_sel == "trimestre":
+                q = (hoy.month - 1) // 3 + 1
+                inicio = hoy.replace(month=(q - 1) * 3 + 1, day=1)
+                fin = hoy
+                prev_fin = inicio - timedelta(days=1)
+                prev_inicio = prev_fin.replace(month=10, day=1) if q == 1 else prev_fin.replace(month=(q - 2) * 3 + 1, day=1)
+            else:
+                inicio = hoy.replace(month=1, day=1)
+                fin = hoy
+                prev_fin = inicio - timedelta(days=1)
+                prev_inicio = prev_fin.replace(month=1, day=1)
+            try:
+                df_dash["_fecha"] = pd.to_datetime(df_dash["fecha"].astype(str).str[:10], errors="coerce")
+                mask = (df_dash["_fecha"].dt.date >= inicio) & (df_dash["_fecha"].dt.date <= fin)
+                df_per = df_dash.loc[mask]
+                mask_prev = (df_dash["_fecha"].dt.date >= prev_inicio) & (df_dash["_fecha"].dt.date <= prev_fin)
+                df_prev = df_dash.loc[mask_prev]
+            except Exception:
+                df_per = df_dash
+                df_prev = pd.DataFrame()
+            ing_per = float(df_per["ingreso"].sum()) if not df_per.empty else 0.0
+            gas_per = float(df_per["gastos"].sum()) if not df_per.empty else 0.0
+            res_per = ing_per - gas_per
+            saldo_cierre_per = float(df_per["saldo_actual"].iloc[-1]) if not df_per.empty and "saldo_actual" in df_per.columns else saldo_act
+            ing_prev = float(df_prev["ingreso"].sum()) if not df_prev.empty else 0.0
+            gas_prev = float(df_prev["gastos"].sum()) if not df_prev.empty else 0.0
+            res_prev = ing_prev - gas_prev
+            pc1, pc2, pc3, pc4 = st.columns(4)
+            with pc1:
+                st.metric(t.get("ingresos_periodo", "Ingresos"), f"${ing_per:,.2f}")
+            with pc2:
+                st.metric(t.get("gastos_periodo", "Gastos"), f"${gas_per:,.2f}")
+            with pc3:
+                st.metric(t.get("resultado_periodo", "Resultado"), f"${res_per:,.2f}")
+            with pc4:
+                st.metric(t.get("saldo_cierre", "Saldo al cierre"), f"${saldo_cierre_per:,.2f}")
+            st.caption(t.get("comparar_periodo_anterior", "Comparar con período anterior"))
+            diff_ing = ing_per - ing_prev
+            diff_gas = gas_per - gas_prev
+            pct_ing = (diff_ing / ing_prev * 100) if ing_prev else 0
+            pct_gas = (diff_gas / gas_prev * 100) if gas_prev else 0
+            comp1, comp2 = st.columns(2)
+            with comp1:
+                st.metric(f"{t.get('ingresos_periodo', 'Ingresos')} {t.get('vs_anterior', 'vs anterior')}", f"${diff_ing:+,.2f}", f"{pct_ing:+.1f}%")
+            with comp2:
+                st.metric(f"{t.get('gastos_periodo', 'Gastos')} {t.get('vs_anterior', 'vs anterior')}", f"${diff_gas:+,.2f}", f"{pct_gas:+.1f}%")
+
+        # ---------- Exportar resumen para contador (totales por mes) ----------
+        with st.expander(f"📤 {t.get('exportar_resumen_contador', 'Exportar resumen para contador')}", expanded=False):
+            st.caption(t.get("exportar_resumen_ayuda", ""))
+            try:
+                df_dash["_fecha"] = pd.to_datetime(df_dash["fecha"].astype(str).str[:10], errors="coerce")
+                df_dash["_mes"] = df_dash["_fecha"].dt.to_period("M").astype(str)
+                resumen_mes = df_dash.groupby("_mes").agg(
+                    ingresos=("ingreso", "sum"),
+                    gastos=("gastos", "sum"),
+                ).reset_index()
+                resumen_mes["resultado"] = resumen_mes["ingresos"] - resumen_mes["gastos"]
+                resumen_mes = resumen_mes.rename(columns={"_mes": "mes"})
+                buf = BytesIO()
+                resumen_mes.to_csv(buf, index=False, encoding="utf-8-sig")
+                buf.seek(0)
+                st.download_button(
+                    label=t.get("exportar_btn_csv_mes", "CSV (totales por mes)"),
+                    data=buf.getvalue(),
+                    file_name=f"resumen_contable_{datetime.now().strftime('%Y-%m-%d')}.csv",
+                    mime="text/csv",
+                    key="btn_exportar_resumen_csv",
+                )
+                if "tipo_gasto" in df_dash.columns:
+                    try:
+                        df_gt_export = df_dash.copy()
+                        df_gt_export["gastos_num"] = pd.to_numeric(df_gt_export["gastos"], errors="coerce").fillna(0)
+                        df_gt_export = df_gt_export[df_gt_export["gastos_num"] > 0]
+                        if not df_gt_export.empty:
+                            resumen_tipo = df_gt_export.groupby(["_mes", "tipo_gasto"]).agg(gastos=("gastos_num", "sum")).reset_index()
+                            resumen_tipo = resumen_tipo.rename(columns={"_mes": "mes"})
+                            buf_xlsx = BytesIO()
+                            with pd.ExcelWriter(buf_xlsx, engine="openpyxl") as writer:
+                                resumen_mes.to_excel(writer, index=False, sheet_name="Por mes")
+                                resumen_tipo.to_excel(writer, index=False, sheet_name="Gastos por mes y tipo")
+                            buf_xlsx.seek(0)
+                            st.download_button(
+                                label=t.get("exportar_btn_excel_mes_tipo", "Excel (por mes y tipo de gasto)"),
+                                data=buf_xlsx.getvalue(),
+                                file_name=f"resumen_contable_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key="btn_exportar_resumen_excel",
+                            )
+                    except Exception:
+                        pass
+            except Exception as e:
+                st.caption(f"Error al generar resumen: {e}")
+
+        # ---------- Respaldo de hoy (solo maestro/admin) ----------
+        es_maestro_contab = (st.session_state.get("es_acceso_maestro") or ES_PC_MAESTRO) and usuario_actual == "admin"
+        if es_maestro_contab and not df.empty:
+            with st.expander(f"💾 {t.get('respaldo_hoy', 'Descargar respaldo de hoy')}", expanded=False):
+                st.caption(t.get("respaldo_hoy_ayuda", ""))
+                hoy_nombre = datetime.now().strftime("%Y-%m-%d")
+                buf_resp = BytesIO()
+                df.to_csv(buf_resp, index=False, encoding="utf-8-sig")
+                buf_resp.seek(0)
+                st.download_button(
+                    label=f"CSV respaldo {hoy_nombre}",
+                    data=buf_resp.getvalue(),
+                    file_name=f"respaldo_contable_{hoy_nombre}.csv",
+                    mime="text/csv",
+                    key="btn_respaldo_hoy_csv",
+                )
+
+        # ---------- Alertas (saldo bajo, gastos > ingresos, sin movimientos) ----------
+        with st.expander(f"⚠️ {t.get('alertas_contabilidad', 'Alertas')}", expanded=False):
+            alertas_list = []
+            if saldo_act < 0:
+                alertas_list.append(t["alerta_saldo_negativo"])
+            if ing_mes > 0 and gas_mes >= ing_mes:
+                alertas_list.append(t["alerta_gastos_altos"])
+            if saldo_act >= 0 and (saldo_act < 500 or (gas_mes > 0 and saldo_act < gas_mes)):
+                alertas_list.append(t["alerta_saldo_bajo"])
+            try:
+                df_ult = df.copy()
+                df_ult["_f"] = pd.to_datetime(df_ult["fecha"].astype(str).str[:10], errors="coerce")
+                df_ult = df_ult.dropna(subset=["_f"]).sort_values("_f")
+                if not df_ult.empty:
+                    ultima_fecha = df_ult["_f"].iloc[-1].date()
+                    dias_sin = (datetime.now().date() - ultima_fecha).days
+                    if dias_sin > 7:
+                        alertas_list.append(t.get("alerta_sin_movimientos_dias", "Sin movimientos recientes.").format(d=dias_sin))
+            except Exception:
+                pass
+            if not alertas_list:
+                st.success(t["sin_alertas"])
+            else:
+                for a in alertas_list:
+                    st.warning(a)
+
         # Gráfico trazabilidad: saldo en el tiempo (línea continua, verde=alza, rojo=baja) — estilo bolsa
         try:
             df_dash = df_dash.copy()
@@ -3900,6 +5062,33 @@ def main():
                 fig.update_yaxes(showgrid=True, gridwidth=1.5, gridcolor=grid_color, zerolinewidth=1)
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True, "displaylogo": False, "scrollZoom": True})
                 st.caption(f"🟢 {t['grafico_alza']}  ·  🔴 {t['grafico_baja']} — {t['grafico_trazabilidad']}")
+
+                # Gráfico gastos por tipo en el tiempo (barras apiladas por mes)
+                if "tipo_gasto" in df_dash.columns and _PLOTLY_DISPONIBLE:
+                    try:
+                        df_gt = df_dash.copy()
+                        df_gt["_mes"] = df_gt["_fecha"].dt.to_period("M").astype(str)
+                        df_gt["gastos_num"] = pd.to_numeric(df_gt["gastos"], errors="coerce").fillna(0)
+                        df_gt = df_gt[df_gt["gastos_num"] > 0]
+                        if not df_gt.empty:
+                            pivot_gt = df_gt.pivot_table(index="_mes", columns="tipo_gasto", values="gastos_num", aggfunc="sum", fill_value=0)
+                            pivot_gt = pivot_gt.reindex(sorted(pivot_gt.columns), axis=1) if len(pivot_gt.columns) > 1 else pivot_gt
+                            fig_gt = go.Figure()
+                            for col in pivot_gt.columns:
+                                fig_gt.add_trace(go.Bar(name=str(col) or "(sin tipo)", x=pivot_gt.index, y=pivot_gt[col].tolist()))
+                            fig_gt.update_layout(
+                                barmode="stack",
+                                title=dict(text=f"📊 {t.get('grafico_por_tipo_gasto', 'Gastos por tipo en el tiempo')}", font=dict(size=14, color=font_color)),
+                                paper_bgcolor=paper_bg, plot_bgcolor=plot_bg,
+                                font=dict(color=font_color, size=11),
+                                xaxis=dict(tickfont=dict(color=font_color)),
+                                yaxis=dict(title="$", tickfont=dict(color=font_color), gridcolor=grid_color),
+                                legend=dict(orientation="h", yanchor="bottom", font=dict(color=font_color)),
+                            )
+                            st.plotly_chart(fig_gt, use_container_width=True, config={"displayModeBar": True, "displaylogo": False})
+                    except Exception:
+                        pass
+
                 # Cuadro Ingresos & Gastos: solo visible con contraseña universal + clic
                 es_maestro = st.session_state.get("es_acceso_maestro") and usuario_actual == "admin"
                 if es_maestro:
@@ -4043,6 +5232,7 @@ def main():
                 df = df.sort_values("fecha", ascending=True).reset_index(drop=True)
                 df = _recalcular_totales_ledger(df)
             df_show = df.copy()
+            ok_int_hoja, _ = verificar_integridad_ledger(df)
             df_show["puede_borrar"] = df_show["fecha"].apply(puede_borrar)
             meta_borrar = cargar_arqueo_meta()
             fechas_cerradas = set(meta_borrar.get("_fechas_cerradas", []) or [])
@@ -4077,6 +5267,29 @@ def main():
                 filtrar_tipo_sel = st.selectbox(
                     t["filtrar_tipo"], options=opciones_tipo, key="filtro_tipo", help=t["help_filtrar_tipo"]
                 )
+            col_f6, col_f7, col_f8 = st.columns(3)
+            with col_f6:
+                tipo_mov_sel = st.radio(
+                    t.get("filtro_tipo_movimiento", "Tipo de movimiento"),
+                    options=["todos", "ingresos", "gastos"],
+                    format_func=lambda x: t.get("todos_movimientos", "Todos") if x == "todos" else (t.get("solo_ingresos", "Solo ingresos") if x == "ingresos" else t.get("solo_gastos", "Solo gastos")),
+                    key="filtro_tipo_mov_hoja",
+                    horizontal=True,
+                )
+            with col_f7:
+                orden_sel = st.radio(
+                    t.get("orden_hoja", "Orden"),
+                    options=["recientes", "antiguos"],
+                    format_func=lambda x: t.get("orden_recientes", "Más recientes primero") if x == "recientes" else t.get("orden_antiguos", "Más antiguos primero"),
+                    key="filtro_orden_hoja",
+                    horizontal=True,
+                )
+            with col_f8:
+                buscar_detalle = st.text_input(
+                    t.get("buscar_en_detalle", "Buscar en detalle"),
+                    placeholder=t.get("buscar_en_detalle_placeholder", ""),
+                    key="filtro_buscar_detalle_hoja",
+                )
             st.caption(t["filtros_ayuda"])
             # Aplicar máscara de filtros
             mask = pd.Series(True, index=df_show.index)
@@ -4107,7 +5320,17 @@ def main():
             if filtrar_tipo_sel and filtrar_tipo_sel != t["todos_los_tipos"]:
                 tipo_norm = df_show["tipo_gasto"].fillna("").astype(str).str.strip()
                 mask &= (tipo_norm == filtrar_tipo_sel)
+            if tipo_mov_sel == "ingresos":
+                mask &= (ing_num > 0)
+            elif tipo_mov_sel == "gastos":
+                mask &= (gas_num > 0)
+            texto_buscar = str(buscar_detalle).strip() if buscar_detalle else ""
+            if texto_buscar:
+                detalle_str = df_show["detalle"].fillna("").astype(str).str.lower()
+                mask &= detalle_str.str.contains(re.escape(texto_buscar.lower()), na=False)
             filtered = df_show[mask]
+            if "fecha" in filtered.columns:
+                filtered = filtered.sort_values("fecha", ascending=(orden_sel == "antiguos")).reset_index(drop=True)
             if filtered.empty:
                 st.info(t["sin_resultados_filtro"])
             else:
@@ -4165,7 +5388,7 @@ def main():
                             st.session_state["pagina_hoja"] = pag_actual + 1
                             st.rerun()
                 es_maestro = st.session_state.get("es_acceso_maestro") and usuario_actual == "admin"
-                if tiene_permiso(usuario_actual, "ver_eliminar_registros") or es_maestro:
+                if (tiene_permiso(usuario_actual, "ver_eliminar_registros") or es_maestro) and ok_int_hoja:
                     titulo_limpiar = t["limpiar_fila"] + (f" ({t['maestro_sin_limite']})" if es_maestro else f" ({t['solo_30min']})")
                     st.markdown(f"**{titulo_limpiar}:**")
                     modo_borrar = st.session_state.get("modo_borrar_registros", False)
@@ -4233,8 +5456,12 @@ def main():
                                 st.session_state.pop("confirmar_borrar_todos", None)
                                 st.rerun()
             if st.session_state.get("es_acceso_maestro") and usuario_actual == "admin":
-                st.markdown("---")
-                st.markdown(f"**{t['maestro_borrar_titulo']}**")
+                if not ok_int_hoja:
+                    st.warning(t.get("integridad_aviso", "") + " " + (t.get("integridad_error_titulo", "") or ""))
+                    st.caption("El borrado de registros está deshabilitado hasta corregir la integridad del libro.")
+                elif ok_int_hoja:
+                    st.markdown("---")
+                    st.markdown(f"**{t['maestro_borrar_titulo']}**")
                 with st.expander(t["maestro_borrar_todo"], expanded=False):
                     st.caption(t["confirmar_limpiar_todo"])
                     confirmar_limpiar = st.text_input("", key="input_limpiar_todo", placeholder=CONFIRMACION_LIMPIAR_TODO)

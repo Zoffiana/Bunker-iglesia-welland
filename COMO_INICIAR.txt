@@ -1,0 +1,30 @@
+========================================
+  CÓMO INICIAR LA APP DE TESORERÍA
+========================================
+
+OPCIÓN 1 - Doble clic (recomendado):
+  - iniciar_app.bat     (desde Explorador de archivos)
+  - O ejecutar: .\iniciar_app.ps1  (en PowerShell)
+
+OPCIÓN 2 - Desde terminal (PowerShell):
+  cd [ruta-del-proyecto]
+  # Ejemplo: cd C:\ruta\CBunker_SistemasIglesia_Welland
+  python -m streamlit run app.py --server.port 8501
+
+  IMPORTANTE: Use "python -m streamlit", NO "streamlit" solo.
+  "streamlit" puede no estar en PATH.
+
+OPCIÓN 3 - Si streamlit está en PATH:
+  streamlit run app.py --server.port 8501
+
+----------------------------------------
+SI HAY ERROR "streamlit no reconocido":
+----------------------------------------
+1. Instale dependencias:
+   pip install -r requirements.txt
+
+2. Use SIEMPRE: python -m streamlit run app.py
+
+----------------------------------------
+La app se abre en: http://localhost:8501
+========================================

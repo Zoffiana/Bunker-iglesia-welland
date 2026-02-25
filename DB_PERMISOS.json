@@ -54,5 +54,12 @@
         "ver_exportar_hoja_pdf"
       ]
     }
-  }
+  },
+  "orden_usuarios": [
+    "admin",
+    "tesorero",
+    "ministerio_musica",
+    "asistente",
+    "pastor"
+  ]
 }

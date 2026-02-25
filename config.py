@@ -39,6 +39,9 @@ LOGIN_INTENTOS = os.environ.get("TESORERIA_LOGIN_INTENTOS", os.path.join(_BASE_D
 if not os.path.isabs(LOGIN_INTENTOS):
     LOGIN_INTENTOS = os.path.join(_BASE_DIR, LOGIN_INTENTOS)
 
+# Modo mantenimiento (admin pausa el sistema; usuarios ven aviso y su trabajo guardado se preserva)
+MANTENIMIENTO_ACTIVO = os.path.join(_BASE_DIR, "mantenimiento_activo.json")
+
 # Seguridad
 MAX_INTENTOS_LOGIN = 5
 MINUTOS_BLOQUEO_LOGIN = 10
