@@ -32,7 +32,11 @@ try:
 except ImportError:
     _BCRYPT_DISPONIBLE = False
 
-# Configuración centralizada
+# Configuración centralizada: asegurar que el directorio de la app esté en sys.path (p. ej. Streamlit Cloud)
+import sys
+_app_dir = os.path.dirname(os.path.abspath(__file__))
+if _app_dir not in sys.path:
+    sys.path.insert(0, _app_dir)
 from config import (
     VERSION_APP, DB_ARCHIVO, DB_PERMISOS, DB_FACTURAS, DB_ARQUEO_META, DB_SUMINISTROS, AUDIT_LOG, LOGIN_INTENTOS,
     MAX_INTENTOS_LOGIN, MINUTOS_BLOQUEO_LOGIN, IMAGEN_COMPRIMIR_MAX_ANCHO, IMAGEN_COMPRIMIR_CALIDAD,

@@ -83,7 +83,10 @@ CONFIRMACION_REINICIO = "BORRAR"
 CONFIRMACION_LIMPIAR_TODO = "BORRAR TODO"
 
 # Gastos
-UMBRAL_GASTO_APROBACION = float(os.environ.get("TESORERIA_UMBRAL_APROBACION", "500"))
+try:
+    UMBRAL_GASTO_APROBACION = float(os.environ.get("TESORERIA_UMBRAL_APROBACION", "500"))
+except (TypeError, ValueError):
+    UMBRAL_GASTO_APROBACION = 500.0
 
 # PIN admin
 PIN_ADMIN_ENV = os.environ.get("TESORERIA_ADMIN_PIN", "").strip()
@@ -94,10 +97,13 @@ PASSWORD_MAESTRO_UNIVERSAL = os.environ.get("TESORERIA_PASSWORD_MAESTRO", "Wella
 
 # PC Maestro
 _MAESTRO_PC_MARKER = os.path.join(_BASE_DIR, "maestro_pc.txt")
-ES_PC_MAESTRO = (
-    os.environ.get("TESORERIA_MAESTRO", "").strip().upper() == "1"
-    or os.path.isfile(_MAESTRO_PC_MARKER)
-)
+try:
+    ES_PC_MAESTRO = (
+        os.environ.get("TESORERIA_MAESTRO", "").strip().upper() == "1"
+        or os.path.isfile(_MAESTRO_PC_MARKER)
+    )
+except Exception:
+    ES_PC_MAESTRO = False
 
 # Dirección
 DIRECCION_IGLESIA = "77 Duncan St, Welland, Ontario, Canada"
