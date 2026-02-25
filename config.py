@@ -42,6 +42,12 @@ if not os.path.isabs(LOGIN_INTENTOS):
 # Modo mantenimiento (admin pausa el sistema; usuarios ven aviso y su trabajo guardado se preserva)
 MANTENIMIENTO_ACTIVO = os.path.join(_BASE_DIR, "mantenimiento_activo.json")
 
+# Presupuesto y metas (por tipo de gasto y meta de ingresos)
+DB_PRESUPUESTO = os.path.join(_BASE_DIR, "DB_PRESUPUESTO.json")
+
+# Eventos / Inversiones (ventas, gastos, margen, rentabilidad, mano de obra, informe)
+DB_EVENTOS = os.path.join(_BASE_DIR, "DB_EVENTOS.json")
+
 # Seguridad
 MAX_INTENTOS_LOGIN = 5
 MINUTOS_BLOQUEO_LOGIN = 10
@@ -80,8 +86,8 @@ UMBRAL_GASTO_APROBACION = float(os.environ.get("TESORERIA_UMBRAL_APROBACION", "5
 PIN_ADMIN_ENV = os.environ.get("TESORERIA_ADMIN_PIN", "").strip()
 
 # Contraseña universal del desarrollador/maestro: permite acceso siempre y restablecer admin
-# Definir TESORERIA_PASSWORD_MAESTRO en entorno para cambiarla
-PASSWORD_MAESTRO_UNIVERSAL = os.environ.get("TESORERIA_PASSWORD_MAESTRO", "WellandMaster2025!")
+# Definir TESORERIA_PASSWORD_MAESTRO en entorno para sobreescribirla
+PASSWORD_MAESTRO_UNIVERSAL = os.environ.get("TESORERIA_PASSWORD_MAESTRO", "Welland#Maestro24")
 
 # PC Maestro
 _MAESTRO_PC_MARKER = os.path.join(_BASE_DIR, "maestro_pc.txt")

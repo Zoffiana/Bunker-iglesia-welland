@@ -40,7 +40,7 @@ from config import (
     CONFIRMACION_REINICIO, CONFIRMACION_LIMPIAR_TODO, UMBRAL_GASTO_APROBACION, PIN_ADMIN_ENV,
     ES_PC_MAESTRO, DIRECCION_IGLESIA, PASSWORD_MAESTRO_UNIVERSAL,
     MIN_LONGITUD_CONTRASENA, REQUIERE_MAYUSCULA, REQUIERE_NUMERO, REQUIERE_SIMBOLO, REGISTROS_POR_PAGINA,
-    MANTENIMIENTO_ACTIVO,
+    MANTENIMIENTO_ACTIVO, DB_PRESUPUESTO, DB_EVENTOS,
 )
 
 # ============== AUDITORÍA Y SEGURIDAD ==============
@@ -266,6 +266,51 @@ def _set_mantenimiento_activo(activo):
     try:
         with open(MANTENIMIENTO_ACTIVO, "w", encoding="utf-8") as f:
             json.dump({"activo": bool(activo)}, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+def cargar_presupuesto():
+    """Carga presupuesto por tipo de gasto y meta de ingresos. Devuelve dict con anio, por_tipo, meta_ingresos."""
+    if not os.path.exists(DB_PRESUPUESTO):
+        anio = datetime.now().year
+        return {"anio": anio, "por_tipo": {}, "meta_ingresos": 0.0}
+    try:
+        with open(DB_PRESUPUESTO, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        d.setdefault("anio", datetime.now().year)
+        d.setdefault("por_tipo", {})
+        d.setdefault("meta_ingresos", 0.0)
+        return d
+    except Exception:
+        return {"anio": datetime.now().year, "por_tipo": {}, "meta_ingresos": 0.0}
+
+def guardar_presupuesto(data):
+    """Guarda presupuesto en DB_PRESUPUESTO."""
+    try:
+        with open(DB_PRESUPUESTO, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
+def cargar_eventos():
+    """Carga lista de eventos/inversiones (ventas, gastos, margen, rentabilidad, mano de obra)."""
+    if not os.path.exists(DB_EVENTOS):
+        return {"eventos": []}
+    try:
+        with open(DB_EVENTOS, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        d.setdefault("eventos", [])
+        return d
+    except Exception:
+        return {"eventos": []}
+
+def guardar_eventos(data):
+    """Guarda eventos en DB_EVENTOS."""
+    try:
+        with open(DB_EVENTOS, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
         return True
     except Exception:
         return False
@@ -675,6 +720,7 @@ PERMISOS_DISPONIBLES = [
     ("ver_tesoreria", "VER TESORERÍA (Libro de Registros)"),
     ("ver_contabilidad", "VER CONTABILIDAD (Bóveda Histórica)"),
     ("ver_presupuesto_metas", "VER PRESUPUESTO Y METAS"),
+    ("ver_eventos_inversiones", "VER EVENTOS / INVERSIONES"),
     ("ver_ingresar_bendicion", "VER INGRESAR BENDICIÓN"),
     ("ver_registrar_gasto", "VER REGISTRAR GASTO"),
     ("ver_hoja_contable", "VER HOJA CONTABLE"),
@@ -685,8 +731,8 @@ PERMISOS_DISPONIBLES = [
 # Perfiles para aplicar de un clic (plantillas de permisos)
 PERFIL_PERMISOS = {
     "asistente": ["ver_inicio", "ver_arqueo_caja"],
-    "tesorero": ["ver_inicio", "ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"],
-    "pastor": ["ver_inicio", "ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad", "ver_presupuesto_metas", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"],
+    "tesorero": ["ver_inicio", "ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad", "ver_eventos_inversiones", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"],
+    "pastor": ["ver_inicio", "ver_arqueo_caja", "ver_tesoreria", "ver_contabilidad", "ver_presupuesto_metas", "ver_eventos_inversiones", "ver_ingresar_bendicion", "ver_registrar_gasto", "ver_hoja_contable", "ver_informe_pdf", "ver_exportar_hoja_pdf"],
     "ministerio_musica": ["ver_inicio", "ver_arqueo_caja", "ver_hoja_contable", "ver_informe_pdf"],
 }
 _ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
@@ -743,6 +789,18 @@ TEXTOS = {
         "ocr_sin_datos": "No se detectó información. Use «Reintentar OCR» o ingrese los datos manualmente.",
         "importar_gastos": "Importar gastos (CSV/Excel)",
         "importar_gastos_ayuda": "Suba un archivo CSV o Excel con columnas: fecha, detalle, tipo_gasto, gastos",
+        "rendicion_cuentas_titulo": "Rendición de cuentas (cuadre rápido)",
+        "rendicion_cuentas_ayuda": "Fondo entregado para insumos (ej. $200). Registre cada gasto (harina $50, azúcar $20, taxi $40). La devolución ($90) se registra como ingreso. Cuadre: Fondo − Gastado = Devolución.",
+        "rendicion_responsable": "Responsable (ej. Hermanas)",
+        "rendicion_fondo_entregado": "Fondo entregado ($)",
+        "rendicion_lineas_gastos": "**Gastos (concepto y monto)**",
+        "concepto": "Concepto",
+        "rendicion_devolucion": "Devolución ($)",
+        "rendicion_cuadre_ok": "Cuadre correcto",
+        "rendicion_cuadre_revisar": "Revisar cuadre",
+        "rendicion_registrar_btn": "Registrar rendición",
+        "rendicion_sin_datos": "Ingrese al menos un gasto o la devolución.",
+        "rendicion_registrada_ok": "Rendición registrada. Gastos y devolución guardados.",
         "recordatorios_recurrentes": "Recordatorios recurrentes",
         "recordatorios_pendientes": "Suministros que podrían estar pendientes este mes:",
         "recordatorios_todos_ok": "Todos los suministros habituales parecen registrados este mes.",
@@ -784,6 +842,62 @@ TEXTOS = {
         "contabilidad_sub": "Bóveda Histórica — Reportes y archivos",
         "presupuesto_metas": "PRESUPUESTO Y METAS",
         "presupuesto_metas_sub": "Visión — Planeación de proyectos",
+        "presupuesto_por_tipo": "Presupuesto por tipo de gasto",
+        "presupuesto_anio": "Año",
+        "meta_ingresos_label": "Meta de ingresos ($)",
+        "presupuesto_guardar": "Guardar presupuesto",
+        "presupuesto_real_titulo": "Real (este año)",
+        "presupuesto_porcentaje": "% usado",
+        "presupuesto_exportar": "Exportar presupuesto vs real",
+        "presupuesto_alerta_superado": "Superó el presupuesto",
+        "presupuesto_guardado_ok": "Presupuesto guardado.",
+        "presupuesto_sin_datos": "No hay movimientos en el período para comparar.",
+        "presupuesto_total_gastos": "Presupuesto gastos (año)",
+        "presupuesto_real_gastos": "Gastos reales (año)",
+        "presupuesto_meta_alcanzada": "¡Meta de ingresos alcanzada!",
+        "presupuesto_defina_meta": "(defina meta arriba)",
+        "eventos_inversiones": "Eventos / Inversiones",
+        "eventos_inversiones_sub": "Cruze de gastos, ventas y margen por evento. Rentabilidad, donaciones, mano de obra, informe y recomendación.",
+        "eventos_buscar": "Buscar por nombre de evento o inversión",
+        "eventos_buscar_placeholder": "Ej: Venta comida marzo",
+        "eventos_nuevo": "Nuevo evento / inversión",
+        "eventos_nombre": "Nombre del evento o inversión",
+        "eventos_fecha": "Fecha",
+        "eventos_gastos": "Gastos ($)",
+        "eventos_ventas": "Ventas / Ingresos ($)",
+        "eventos_margen": "Margen",
+        "eventos_rentable": "Rentable",
+        "eventos_no_rentable": "No rentable",
+        "eventos_donaciones": "Donaciones ($)",
+        "eventos_perdidas": "Pérdidas ($)",
+        "eventos_mano_obra_pagada": "Mano de obra pagada ($)",
+        "eventos_mano_obra_donada": "Mano de obra donada",
+        "eventos_mano_obra_por": "Mano de obra donada por",
+        "eventos_por_hermanas": "Hermanas",
+        "eventos_por_miembros": "Miembros",
+        "eventos_por_ambos": "Hermanas y miembros",
+        "eventos_quien_dono": "Quiénes donaron mano de obra",
+        "eventos_recomendacion": "¿Se recomienda repetir?",
+        "eventos_recom_si": "Sí, recomendado",
+        "eventos_recom_no": "No",
+        "eventos_recom_tal_vez": "Tal vez",
+        "eventos_nota": "Nota",
+        "eventos_nota_placeholder": "Detalles del evento",
+        "eventos_guardar_btn": "Guardar evento",
+        "eventos_nombre_requerido": "Indique el nombre del evento.",
+        "eventos_guardado_ok": "Evento guardado.",
+        "eventos_listado": "Listado de eventos",
+        "eventos_sin_eventos": "No hay eventos. Cree uno en «Nuevo evento / inversión».",
+        "eventos_cruce": "Cruze",
+        "eventos_gaste": "Gasté",
+        "eventos_vendi": "Vendí",
+        "eventos_btn_registrar_ingreso": "Registrar ingreso",
+        "eventos_btn_registrar_gasto": "Registrar gasto",
+        "eventos_informe_titulo": "Informe del evento",
+        "eventos_descargar_informe": "Descargar informe",
+        "eventos_botones_registrar": "**Registrar en libro:**",
+        "eventos_si": "Sí",
+        "eventos_no": "No",
         "bienvenida_titulo": "BIENVENIDO",
         "bienvenida_texto": "SELECCIONE UNA OPCIÓN DEL MENÚ PARA CONTINUAR.",
         "sistema_operaciones": "SISTEMA DE OPERACIONES",
@@ -1191,6 +1305,18 @@ TEXTOS = {
         "ocr_sin_datos": "No information detected. Use «Retry OCR» or enter data manually.",
         "importar_gastos": "Import expenses (CSV/Excel)",
         "importar_gastos_ayuda": "Upload CSV or Excel with columns: fecha, detalle, tipo_gasto, gastos",
+        "rendicion_cuentas_titulo": "Accountability (quick reconciliation)",
+        "rendicion_cuentas_ayuda": "Fund given for supplies (e.g. $200). Enter each expense (flour $50, sugar $20, taxi $40). The return ($90) is recorded as income. Reconcile: Fund − Spent = Return.",
+        "rendicion_responsable": "Responsible (e.g. Sisters)",
+        "rendicion_fondo_entregado": "Fund given ($)",
+        "rendicion_lineas_gastos": "**Expenses (concept and amount)**",
+        "concepto": "Concept",
+        "rendicion_devolucion": "Return ($)",
+        "rendicion_cuadre_ok": "Reconciliation correct",
+        "rendicion_cuadre_revisar": "Check reconciliation",
+        "rendicion_registrar_btn": "Register accountability",
+        "rendicion_sin_datos": "Enter at least one expense or the return amount.",
+        "rendicion_registrada_ok": "Accountability registered. Expenses and return saved.",
         "recordatorios_recurrentes": "Recurring reminders",
         "recordatorios_pendientes": "Supplies that may be pending this month:",
         "recordatorios_todos_ok": "All usual supplies appear to be registered this month.",
@@ -1232,6 +1358,62 @@ TEXTOS = {
         "contabilidad_sub": "Historic Vault — Reports and files",
         "presupuesto_metas": "BUDGET & GOALS",
         "presupuesto_metas_sub": "Vision — Project planning",
+        "presupuesto_por_tipo": "Budget by expense type",
+        "presupuesto_anio": "Year",
+        "meta_ingresos_label": "Income goal ($)",
+        "presupuesto_guardar": "Save budget",
+        "presupuesto_real_titulo": "Actual (this year)",
+        "presupuesto_porcentaje": "% used",
+        "presupuesto_exportar": "Export budget vs actual",
+        "presupuesto_alerta_superado": "Over budget",
+        "presupuesto_guardado_ok": "Budget saved.",
+        "presupuesto_sin_datos": "No transactions in the period to compare.",
+        "presupuesto_total_gastos": "Budget expenses (year)",
+        "presupuesto_real_gastos": "Actual expenses (year)",
+        "presupuesto_meta_alcanzada": "Income goal reached!",
+        "presupuesto_defina_meta": "(set goal above)",
+        "eventos_inversiones": "Events / Investments",
+        "eventos_inversiones_sub": "Cross of expenses, sales and margin per event. Profitability, donations, labor, report and recommendation.",
+        "eventos_buscar": "Search by event or investment name",
+        "eventos_buscar_placeholder": "E.g.: Food sale March",
+        "eventos_nuevo": "New event / investment",
+        "eventos_nombre": "Event or investment name",
+        "eventos_fecha": "Date",
+        "eventos_gastos": "Expenses ($)",
+        "eventos_ventas": "Sales / Income ($)",
+        "eventos_margen": "Margin",
+        "eventos_rentable": "Profitable",
+        "eventos_no_rentable": "Not profitable",
+        "eventos_donaciones": "Donations ($)",
+        "eventos_perdidas": "Losses ($)",
+        "eventos_mano_obra_pagada": "Paid labor ($)",
+        "eventos_mano_obra_donada": "Donated labor",
+        "eventos_mano_obra_por": "Labor donated by",
+        "eventos_por_hermanas": "Sisters",
+        "eventos_por_miembros": "Members",
+        "eventos_por_ambos": "Sisters and members",
+        "eventos_quien_dono": "Who donated labor",
+        "eventos_recomendacion": "Recommend repeating?",
+        "eventos_recom_si": "Yes, recommended",
+        "eventos_recom_no": "No",
+        "eventos_recom_tal_vez": "Maybe",
+        "eventos_nota": "Note",
+        "eventos_nota_placeholder": "Event details",
+        "eventos_guardar_btn": "Save event",
+        "eventos_nombre_requerido": "Enter the event name.",
+        "eventos_guardado_ok": "Event saved.",
+        "eventos_listado": "Event list",
+        "eventos_sin_eventos": "No events. Create one in «New event / investment».",
+        "eventos_cruce": "Cross",
+        "eventos_gaste": "Spent",
+        "eventos_vendi": "Sold",
+        "eventos_btn_registrar_ingreso": "Register income",
+        "eventos_btn_registrar_gasto": "Register expense",
+        "eventos_informe_titulo": "Event report",
+        "eventos_descargar_informe": "Download report",
+        "eventos_botones_registrar": "**Register in ledger:**",
+        "eventos_si": "Yes",
+        "eventos_no": "No",
         "bienvenida_titulo": "WELCOME",
         "bienvenida_texto": "SELECT AN OPTION FROM THE MENU TO CONTINUE.",
         "sistema_operaciones": "OPERATIONS SYSTEM",
@@ -1622,11 +1804,11 @@ DEFAULT_TIPO_GASTO = "Otros"  # para registros antiguos o sin tipo
 # Tipos de ingreso universales para iglesia (se guardan en columna tipo_gasto para ingresos)
 TIPOS_INGRESO_ES = [
     "Ofrenda del culto", "Diezmo", "Arqueo de caja (ministerio)", "Donación designada",
-    "Evento o actividad", "Venta / Kiosco / Cafetería", "Ofrenda misionera", "Otros ingresos"
+    "Evento o actividad", "Venta / Kiosco / Cafetería", "Venta comida y gaseosas", "Ofrenda misionera", "Devolución de fondo", "Otros ingresos"
 ]
 TIPOS_INGRESO_EN = [
     "Service offering", "Tithe", "Cash count (ministry)", "Designated donation",
-    "Event or activity", "Sale / Kiosk / Café", "Missions offering", "Other income"
+    "Event or activity", "Sale / Kiosk / Café", "Food and soda sales", "Missions offering", "Fund return", "Other income"
 ]
 DEFAULT_TIPO_INGRESO = "Ofrenda del culto"
 
@@ -3416,6 +3598,12 @@ def main():
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
+        if tiene_permiso(usuario_actual, "ver_eventos_inversiones"):
+            if st.button(f"📌 {t.get('eventos_inversiones', 'Eventos / Inversiones')}", key="btn_eventos", use_container_width=True):
+                st.session_state["pagina"] = "eventos"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
+                st.rerun()
         if usuario_actual == "admin":
             if st.button(f"⚙️ {t['administracion']}", key="btn_admin", use_container_width=True):
                 st.session_state["pagina"] = "administracion"
@@ -3981,29 +4169,35 @@ def main():
                 st.session_state["cartel_abierto_inicio"] = None
                 st.rerun()
             st.markdown("---")
-        # Accesos rápidos a las 4 oficinas (según permisos)
-        col_a, col_b, col_c, col_d = st.columns(4)
-        with col_a:
+        # Accesos rápidos: cada oficina en su columna (Arqueo, Tesorería, Contabilidad, Presupuesto, Eventos)
+        col_arqueo, col_tesoreria, col_contab, col_presup, col_eventos = st.columns(5)
+        with col_arqueo:
             if tiene_permiso(usuario_actual, "ver_arqueo_caja") and st.button(f"📋 {t['arqueo_caja']}", key="btn_ir_arqueo", use_container_width=True):
                 st.session_state["pagina"] = "arqueo_caja"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
-        with col_b:
+        with col_tesoreria:
             if tiene_permiso(usuario_actual, "ver_tesoreria") and st.button(f"📒 {t['tesoreria']}", key="btn_ir_tesoreria", use_container_width=True):
                 st.session_state["pagina"] = "tesoreria"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
-        with col_c:
+        with col_contab:
             if tiene_permiso(usuario_actual, "ver_contabilidad") and st.button(f"📊 {t['contabilidad']}", key="btn_ir_contabilidad", use_container_width=True):
                 st.session_state["pagina"] = "contabilidad"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
-        with col_d:
+        with col_presup:
             if tiene_permiso(usuario_actual, "ver_presupuesto_metas") and st.button(f"🎯 {t['presupuesto_metas']}", key="btn_ir_presupuesto", use_container_width=True):
                 st.session_state["pagina"] = "presupuesto_metas"
+                st.session_state["sidebar_state"] = "collapsed"
+                st.session_state["sidebar_collapse_requested"] = True
+                st.rerun()
+        with col_eventos:
+            if tiene_permiso(usuario_actual, "ver_eventos_inversiones") and st.button(f"📌 {t.get('eventos_inversiones', 'Eventos / Inversiones')}", key="btn_ir_eventos", use_container_width=True):
+                st.session_state["pagina"] = "eventos"
                 st.session_state["sidebar_state"] = "collapsed"
                 st.session_state["sidebar_collapse_requested"] = True
                 st.rerun()
@@ -4018,7 +4212,7 @@ def main():
     if pagina_act == "ministerio_finanzas":
         st.session_state["pagina"] = "contabilidad"
         st.rerun()
-    if pagina_act not in ("arqueo_caja", "tesoreria", "contabilidad", "presupuesto_metas"):
+    if pagina_act not in ("arqueo_caja", "tesoreria", "contabilidad", "presupuesto_metas", "eventos"):
         st.info(t["bienvenida_texto"])
         return
 
@@ -4734,6 +4928,58 @@ def main():
                                 st.info("No se encontraron filas válidas para importar.")
                     except Exception as ex:
                         st.error(f"Error al importar: {ex}")
+            with st.expander(f"📋 {t.get('rendicion_cuentas_titulo', 'Rendición de cuentas (cuadre rápido)')}", expanded=False):
+                st.caption(t.get("rendicion_cuentas_ayuda", "Fondo entregado para insumos (ej. $200). Registre cada gasto (harina $50, azúcar $20, taxi $40). La devolución ($90) se registra como ingreso. Cuadre: Fondo − Gastado = Devolución."))
+                responsable_rend = st.text_input(t.get("rendicion_responsable", "Responsable (ej. Hermanas)"), key="rendicion_responsable", max_chars=80, placeholder="Hermanas")
+                fondo_entregado = st.number_input(t.get("rendicion_fondo_entregado", "Fondo entregado ($)"), min_value=0.0, value=0.0, step=10.0, key="rendicion_fondo")
+                st.markdown(t.get("rendicion_lineas_gastos", "**Gastos (concepto y monto)**"))
+                lineas_rend = []
+                for i in range(8):
+                    c1, c2 = st.columns([2, 1])
+                    with c1:
+                        concepto_rend = st.text_input(t.get("concepto", "Concepto"), key=f"rendicion_conc_{i}", placeholder="Harina, Azúcar, Taxi...")
+                    with c2:
+                        monto_rend = st.number_input("$", min_value=0.0, value=0.0, step=5.0, key=f"rendicion_monto_{i}")
+                    if concepto_rend or monto_rend > 0:
+                        lineas_rend.append((concepto_rend.strip() or f"Item {i+1}", round(float(monto_rend), 2)))
+                total_gastado = sum(m for _, m in lineas_rend)
+                devolucion_rend = st.number_input(t.get("rendicion_devolucion", "Devolución ($)"), min_value=0.0, value=0.0, step=5.0, key="rendicion_devolucion")
+                esperado = round(fondo_entregado - total_gastado, 2)
+                cuadre_ok = abs(devolucion_rend - esperado) < 0.02
+                if fondo_entregado > 0:
+                    if cuadre_ok:
+                        st.success(f"✓ {t.get('rendicion_cuadre_ok', 'Cuadre correcto')}: {fondo_entregado:.2f} − {total_gastado:.2f} = {devolucion_rend:.2f}")
+                    else:
+                        st.warning(f"⚠ {t.get('rendicion_cuadre_revisar', 'Revisar cuadre')}: Fondo {fondo_entregado:.2f} − Gastado {total_gastado:.2f} = {esperado:.2f} (devolución ingresada: {devolucion_rend:.2f})")
+                if st.button(t.get("rendicion_registrar_btn", "Registrar rendición"), key="btn_rendicion"):
+                    if not lineas_rend and devolucion_rend <= 0:
+                        st.warning(t.get("rendicion_sin_datos", "Ingrese al menos un gasto o la devolución."))
+                    else:
+                        fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        resp_label = (responsable_rend or "Rendición").strip()[:80]
+                        tipo_operativo = "Operativo" if lang == "ES" else "Operational"
+                        for concepto, monto in lineas_rend:
+                            if monto <= 0:
+                                continue
+                            rid = generar_id_gasto()
+                            det = f"Rendición {resp_label}: {concepto}"[:200]
+                            nueva = pd.DataFrame([{"id_registro": rid, "fecha": fecha_ahora, "detalle": det, "tipo_gasto": tipo_operativo, "ingreso": 0, "gastos": monto, "total_ingresos": 0, "total_gastos": 0, "saldo_actual": 0}])
+                            df = pd.concat([df, nueva], ignore_index=True)
+                        if devolucion_rend > 0:
+                            rid_ing = generar_id()
+                            tipo_dev_es = "Devolución de fondo"
+                            tipo_dev_en = "Fund return"
+                            tipo_dev = tipo_dev_es if lang == "ES" else tipo_dev_en
+                            det_ing = f"Devolución de fondo — {resp_label}" if lang == "ES" else f"Fund return — {resp_label}"
+                            nueva_ing = pd.DataFrame([{"id_registro": rid_ing, "fecha": fecha_ahora, "detalle": det_ing[:200], "tipo_gasto": tipo_dev_es, "ingreso": round(devolucion_rend, 2), "gastos": 0, "total_ingresos": 0, "total_gastos": 0, "saldo_actual": 0}])
+                            df = pd.concat([df, nueva_ing], ignore_index=True)
+                        df = _recalcular_totales_ledger(df)
+                        if guardar_db(df, t):
+                            audit_log(usuario_actual, "rendicion_cuentas", f"{resp_label} gastos={len(lineas_rend)} dev={devolucion_rend:.2f}")
+                            st.success(t.get("rendicion_registrada_ok", "Rendición registrada. Gastos y devolución guardados."))
+                            st.rerun()
+                        else:
+                            st.error(t.get("error_guardar", "Error al guardar."))
             with st.expander(f"🔔 {t.get('recordatorios_recurrentes', 'Recordatorios')}", expanded=False):
                 suministros_pend = cargar_suministros()
                 mes_actual = datetime.now().strftime("%Y-%m")
@@ -4780,7 +5026,238 @@ def main():
     if pagina_act == "presupuesto_metas":
         st.markdown(f"## 🎯 {t['presupuesto_metas']}")
         st.caption(t["presupuesto_metas_sub"])
-        st.info("Espacio de planeación: metas de recaudación, presupuestos por proyecto. (En desarrollo)" if lang == "ES" else "Planning space: fundraising goals, project budgets. (In development)")
+        presup = cargar_presupuesto()
+        anio_sel = presup.get("anio", datetime.now().year)
+        tipos_es = TIPOS_GASTO_ES
+        tipos_en = TIPOS_GASTO_EN
+        por_tipo = presup.get("por_tipo") or {}
+        meta_ingresos = float(presup.get("meta_ingresos") or 0)
+
+        anio_str = str(anio_sel)
+        df_p = df.copy() if not df.empty else pd.DataFrame()
+        if not df_p.empty and "fecha" in df_p.columns and "tipo_gasto" in df_p.columns and "gastos" in df_p.columns:
+            try:
+                df_p["_fecha"] = pd.to_datetime(df_p["fecha"].astype(str).str[:10], errors="coerce")
+                df_p["_anio"] = df_p["_fecha"].dt.year.astype(str)
+                df_p = df_p[df_p["_anio"] == anio_str]
+                gastos_num = pd.to_numeric(df_p["gastos"], errors="coerce").fillna(0)
+                real_por_tipo = df_p.assign(gastos_num=gastos_num).groupby("tipo_gasto")["gastos_num"].sum().to_dict()
+                ingreso_num = pd.to_numeric(df_p["ingreso"], errors="coerce").fillna(0)
+                ingresos_reales = float(ingreso_num.sum())
+            except Exception:
+                real_por_tipo = {}
+                ingresos_reales = 0.0
+        else:
+            real_por_tipo = {}
+            ingresos_reales = 0.0
+
+        total_presup = sum(float(por_tipo.get(t, 0) or 0) for t in tipos_es)
+        total_real_gastos = sum(float(v) for v in real_por_tipo.values())
+        pct_ing = (ingresos_reales / meta_ingresos * 100) if meta_ingresos > 0 else 0.0
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            st.metric(t.get("presupuesto_total_gastos", "Presupuesto gastos (año)"), f"${total_presup:,.2f}")
+        with m2:
+            st.metric(t.get("presupuesto_real_gastos", "Gastos reales (año)"), f"${total_real_gastos:,.2f}")
+        with m3:
+            st.metric(t.get("meta_ingresos_label", "Meta ingresos"), f"${ingresos_reales:,.2f} / ${meta_ingresos:,.2f}" if meta_ingresos > 0 else f"${ingresos_reales:,.2f}")
+
+        with st.expander(f"✏️ {t.get('presupuesto_por_tipo', 'Presupuesto por tipo de gasto')} — {t.get('presupuesto_anio', 'Año')}", expanded=False):
+            anio_input = st.number_input(t.get("presupuesto_anio", "Año"), min_value=datetime.now().year - 2, max_value=datetime.now().year + 1, value=anio_sel, step=1, key="presup_anio_input")
+            tipos_label = tipos_es if lang == "ES" else tipos_en
+            nuevos = {}
+            cols = st.columns(2)
+            for i, tipo in enumerate(tipos_es):
+                with cols[i % 2]:
+                    val = por_tipo.get(tipo, 0)
+                    num = st.number_input(
+                        tipos_label[i],
+                        min_value=0.0, value=float(val) if val else 0.0, step=100.0,
+                        key=f"presup_{tipo}_{anio_sel}",
+                    )
+                    nuevos[tipo] = num
+            meta_new = st.number_input(t.get("meta_ingresos_label", "Meta de ingresos ($)"), min_value=0.0, value=meta_ingresos, step=500.0, key="presup_meta_ingresos")
+            if st.button(t.get("presupuesto_guardar", "Guardar presupuesto"), key="btn_guardar_presupuesto"):
+                presup["por_tipo"] = nuevos
+                presup["meta_ingresos"] = meta_new
+                presup["anio"] = int(anio_input)
+                if guardar_presupuesto(presup):
+                    st.success(t.get("presupuesto_guardado_ok", "Presupuesto guardado."))
+                    st.rerun()
+
+        st.markdown(f"**{t.get('presupuesto_vs_real', 'Presupuesto vs real')}** — {t.get('presupuesto_real_titulo', 'Real (este año)')} ({anio_sel})")
+        filas = []
+        for i, tipo in enumerate(tipos_es):
+            presup_val = float(por_tipo.get(tipo) or 0)
+            real_val = float(real_por_tipo.get(tipo) or 0)
+            pct = (real_val / presup_val * 100) if presup_val > 0 else (100.0 if real_val > 0 else 0.0)
+            estado = "🔴" if pct > 100 else ("🟡" if pct > 80 else "🟢")
+            nombre_tipo = tipos_en[i] if lang == "EN" else tipo
+            filas.append({"tipo": nombre_tipo, "presupuesto": presup_val, "real": real_val, "pct": pct, "estado": estado})
+        otros_tipos = [k for k in real_por_tipo if k not in tipos_es and str(k).strip()]
+        for ot in otros_tipos:
+            real_val = float(real_por_tipo.get(ot) or 0)
+            if real_val > 0:
+                nombre_ot = ot if isinstance(ot, str) else str(ot)
+                filas.append({"tipo": nombre_ot, "presupuesto": 0.0, "real": real_val, "pct": 0.0, "estado": "⚪"})
+        if filas:
+            df_tabla = pd.DataFrame(filas)
+            st.dataframe(
+                df_tabla.assign(
+                    presupuesto=df_tabla["presupuesto"].apply(lambda x: f"${x:,.2f}"),
+                    real=df_tabla["real"].apply(lambda x: f"${x:,.2f}"),
+                    pct=df_tabla["pct"].apply(lambda x: f"{x:.1f}%" if x > 0 else "—"),
+                )[["estado", "tipo", "presupuesto", "real", "pct"]],
+                use_container_width=True, hide_index=True,
+            )
+            for r in filas:
+                if r["pct"] > 100:
+                    st.warning(f"⚠️ {r['tipo']}: {t.get('presupuesto_alerta_superado', 'Superó el presupuesto')} ({r['pct']:.1f}%)")
+        else:
+            st.caption(t.get("presupuesto_sin_datos", "No hay movimientos en el período para comparar."))
+
+        st.markdown("**" + t.get("meta_ingresos_label", "Meta de ingresos ($)") + "**")
+        if meta_ingresos > 0:
+            st.progress(min(1.0, ingresos_reales / meta_ingresos))
+            st.caption(f"${ingresos_reales:,.2f} / ${meta_ingresos:,.2f} ({pct_ing:.1f}%)")
+            if ingresos_reales >= meta_ingresos:
+                st.success(t.get("presupuesto_meta_alcanzada", "¡Meta de ingresos alcanzada!"))
+        else:
+            st.caption(f"${ingresos_reales:,.2f} " + t.get("presupuesto_defina_meta", "(defina meta arriba)"))
+
+        try:
+            buf_p = BytesIO()
+            resum = pd.DataFrame(filas) if filas else pd.DataFrame(columns=["tipo", "presupuesto", "real", "pct"])
+            if not resum.empty:
+                resum["meta_ingresos"] = meta_ingresos
+                resum["ingresos_reales"] = ingresos_reales
+            else:
+                resum = pd.DataFrame([{"tipo": "—", "presupuesto": total_presup, "real": total_real_gastos, "pct": 0, "meta_ingresos": meta_ingresos, "ingresos_reales": ingresos_reales}])
+            resum.to_csv(buf_p, index=False, encoding="utf-8-sig")
+            buf_p.seek(0)
+            st.download_button(
+                label=t.get("presupuesto_exportar", "Exportar presupuesto vs real"),
+                data=buf_p.getvalue(),
+                file_name=f"presupuesto_vs_real_{anio_sel}.csv",
+                mime="text/csv",
+                key="btn_export_presupuesto",
+            )
+        except Exception:
+            pass
+        return
+
+    # ---------- EVENTOS / INVERSIONES (cruze gastos–ventas–margen, rentabilidad, informe) ----------
+    if pagina_act == "eventos":
+        st.markdown(f"## 📌 {t.get('eventos_inversiones', 'Eventos / Inversiones')}")
+        st.caption(t.get("eventos_inversiones_sub", "Cruze de gastos, ventas y margen por evento. Rentabilidad, donaciones, mano de obra, informe y recomendación."))
+        data_ev = cargar_eventos()
+        lista_ev = data_ev.get("eventos") or []
+        buscar_ev = st.text_input(t.get("eventos_buscar", "Buscar por nombre de evento o inversión"), key="eventos_buscar_input", placeholder=t.get("eventos_buscar_placeholder", "Ej: Venta comida marzo"))
+        if buscar_ev and buscar_ev.strip():
+            lista_ev = [e for e in lista_ev if (e.get("nombre") or "").lower().find(buscar_ev.strip().lower()) >= 0]
+        with st.expander(f"➕ {t.get('eventos_nuevo', 'Nuevo evento / inversión')}", expanded=False):
+            nombre_ev = st.text_input(t.get("eventos_nombre", "Nombre del evento o inversión"), key="ev_nombre", max_chars=120, placeholder="Venta comida hermanas Marzo 2025")
+            fecha_ev = st.date_input(t.get("eventos_fecha", "Fecha"), value=datetime.now().date(), key="ev_fecha")
+            gastos_ev = st.number_input(t.get("eventos_gastos", "Gastos ($)"), min_value=0.0, value=0.0, step=10.0, key="ev_gastos")
+            ventas_ev = st.number_input(t.get("eventos_ventas", "Ventas / Ingresos ($)"), min_value=0.0, value=0.0, step=10.0, key="ev_ventas")
+            margen_ev = round(ventas_ev - gastos_ev, 2)
+            rentable_ev = margen_ev > 0
+            st.metric(t.get("eventos_margen", "Margen"), f"${margen_ev:,.2f}", f"{t.get('eventos_rentable', 'Rentable') if rentable_ev else t.get('eventos_no_rentable', 'No rentable')}")
+            donaciones_ev = st.number_input(t.get("eventos_donaciones", "Donaciones ($)"), min_value=0.0, value=0.0, step=5.0, key="ev_donaciones")
+            perdidas_ev = st.number_input(t.get("eventos_perdidas", "Pérdidas ($)"), min_value=0.0, value=0.0, step=5.0, key="ev_perdidas")
+            mano_obra_pagada_ev = st.number_input(t.get("eventos_mano_obra_pagada", "Mano de obra pagada ($)"), min_value=0.0, value=0.0, step=5.0, key="ev_mano_obra_pagada")
+            mano_obra_donada_ev = st.radio(t.get("eventos_mano_obra_donada", "Mano de obra donada"), options=["no", "si"], format_func=lambda x: t.get("eventos_si", "Sí") if x == "si" else t.get("eventos_no", "No"), key="ev_mano_obra_donada", horizontal=True)
+            quien_tipo_ev = st.selectbox(t.get("eventos_mano_obra_por", "Mano de obra donada por"), options=["", "hermanas", "miembros", "ambos"], format_func=lambda x: {"": "—", "hermanas": t.get("eventos_por_hermanas", "Hermanas"), "miembros": t.get("eventos_por_miembros", "Miembros"), "ambos": t.get("eventos_por_ambos", "Hermanas y miembros")}.get(x, x), key="ev_quien_tipo")
+            quien_dono_ev = st.text_input(t.get("eventos_quien_dono", "Quiénes donaron mano de obra (nombres)"), key="ev_quien_dono", placeholder="María, Ana, Juan")
+            recomendacion_ev = st.radio(t.get("eventos_recomendacion", "¿Se recomienda repetir?"), options=["si", "no", "tal_vez"], format_func=lambda x: {"si": t.get("eventos_recom_si", "Sí, recomendado"), "no": t.get("eventos_recom_no", "No"), "tal_vez": t.get("eventos_recom_tal_vez", "Tal vez")}.get(x, x), key="ev_recomendacion", horizontal=True)
+            nota_ev = st.text_area(t.get("eventos_nota", "Nota"), key="ev_nota", max_chars=500, placeholder=t.get("eventos_nota_placeholder", "Detalles del evento"))
+            if st.button(t.get("eventos_guardar_btn", "Guardar evento"), key="btn_guardar_evento"):
+                if not nombre_ev or not nombre_ev.strip():
+                    st.warning(t.get("eventos_nombre_requerido", "Indique el nombre del evento."))
+                else:
+                    ev_id = f"EV-{datetime.now().strftime('%Y-%m-%d-%H%M%S')}"
+                    nuevo = {
+                        "id": ev_id,
+                        "nombre": nombre_ev.strip(),
+                        "fecha": fecha_ev.strftime("%Y-%m-%d"),
+                        "gastos": round(float(gastos_ev), 2),
+                        "ventas": round(float(ventas_ev), 2),
+                        "margen": margen_ev,
+                        "rentable": rentable_ev,
+                        "donaciones": round(float(donaciones_ev), 2),
+                        "perdidas": round(float(perdidas_ev), 2),
+                        "mano_obra_pagada": round(float(mano_obra_pagada_ev), 2),
+                        "mano_obra_donada": mano_obra_donada_ev == "si",
+                        "mano_obra_por": (quien_tipo_ev or "").strip() or None,
+                        "quien_dono_mano_obra": (quien_dono_ev or "").strip()[:200],
+                        "recomendacion": recomendacion_ev,
+                        "nota": (nota_ev or "").strip()[:500],
+                    }
+                    lista_ev = data_ev.get("eventos") or []
+                    lista_ev.append(nuevo)
+                    data_ev["eventos"] = lista_ev
+                    if guardar_eventos(data_ev):
+                        audit_log(usuario_actual, "evento_creado", ev_id)
+                        st.success(t.get("eventos_guardado_ok", "Evento guardado."))
+                        st.rerun()
+                    else:
+                        st.error(t.get("error_guardar", "Error al guardar."))
+        st.markdown(f"**{t.get('eventos_listado', 'Listado de eventos')}**")
+        if not lista_ev:
+            st.info(t.get("eventos_sin_eventos", "No hay eventos. Cree uno en «Nuevo evento / inversión»."))
+        else:
+            for ev in sorted(lista_ev, key=lambda x: x.get("fecha") or "", reverse=True):
+                with st.expander(f"{'✅' if ev.get('rentable') else '⚠️'} {ev.get('nombre', '—')} — {ev.get('fecha', '')} | ${ev.get('margen', 0):,.2f}", expanded=False):
+                    gastos_v = ev.get("gastos") or 0
+                    ventas_v = ev.get("ventas") or 0
+                    margen_v = ev.get("margen", ventas_v - gastos_v)
+                    st.markdown(f"### {t.get('eventos_informe_titulo', 'Informe del evento')}")
+                    informe_lines = [
+                        f"**{t.get('eventos_cruce', 'Cruze')}:** {t.get('eventos_gaste', 'Gasté')} ${gastos_v:,.2f} · {t.get('eventos_vendi', 'Vendí')} ${ventas_v:,.2f} · **{t.get('eventos_margen', 'Margen')} ${margen_v:,.2f}**",
+                        f"**{t.get('eventos_rentable', 'Rentable')}:** " + (t.get("eventos_rentable", "Rentable") if ev.get("rentable") else t.get("eventos_no_rentable", "No rentable")),
+                        f"**{t.get('eventos_donaciones', 'Donaciones')}:** ${ev.get('donaciones', 0):,.2f} · **{t.get('eventos_perdidas', 'Pérdidas')}:** ${ev.get('perdidas', 0):,.2f}",
+                        f"**{t.get('eventos_mano_obra_pagada', 'Mano de obra pagada')}:** ${ev.get('mano_obra_pagada', 0):,.2f}",
+                        f"**{t.get('eventos_mano_obra_donada', 'Mano de obra donada')}:** " + (t.get("eventos_si", "Sí") if ev.get("mano_obra_donada") else t.get("eventos_no", "No")),
+                    ]
+                    por_tipo = ev.get("mano_obra_por")
+                    if por_tipo:
+                        por_label = {"hermanas": t.get("eventos_por_hermanas", "Hermanas"), "miembros": t.get("eventos_por_miembros", "Miembros"), "ambos": t.get("eventos_por_ambos", "Hermanas y miembros")}.get(por_tipo, por_tipo)
+                        informe_lines.append(f"**{t.get('eventos_mano_obra_por', 'Donada por')}:** {por_label}")
+                    if ev.get("quien_dono_mano_obra"):
+                        informe_lines.append(f"**{t.get('eventos_quien_dono', 'Quiénes donaron mano de obra')}:** {ev['quien_dono_mano_obra']}")
+                    rec = ev.get("recomendacion", "")
+                    rec_label = {"si": t.get("eventos_recom_si", "Sí, recomendado"), "no": t.get("eventos_recom_no", "No"), "tal_vez": t.get("eventos_recom_tal_vez", "Tal vez")}.get(rec, rec)
+                    informe_lines.append(f"**{t.get('eventos_recomendacion', '¿Se recomienda repetir?')}:** {rec_label}")
+                    if ev.get("nota"):
+                        informe_lines.append(f"**{t.get('eventos_nota', 'Nota')}:** {ev['nota']}")
+                    for line in informe_lines:
+                        st.markdown(line)
+                    informe_texto = "\n".join([ev.get("nombre", "—"), ev.get("fecha", ""), ""] + [l.replace("**", "").replace("*", "") for l in informe_lines])
+                    buf_inf = BytesIO()
+                    buf_inf.write(informe_texto.encode("utf-8"))
+                    buf_inf.seek(0)
+                    st.download_button(
+                        label=t.get("eventos_descargar_informe", "Descargar informe"),
+                        data=buf_inf.getvalue(),
+                        file_name=f"informe_evento_{(ev.get('nombre') or 'evento')[:40].replace('/', '-')}_{ev.get('fecha', '')}.txt",
+                        mime="text/plain",
+                        key=f"ev_informe_{ev.get('id', '')}",
+                    )
+                    st.markdown("---")
+                    st.markdown(t.get("eventos_botones_registrar", "**Registrar en libro:**"))
+                    col_r1, col_r2 = st.columns(2)
+                    with col_r1:
+                        if tiene_permiso(usuario_actual, "ver_ingresar_bendicion") and st.button(t.get("eventos_btn_registrar_ingreso", "Registrar ingreso"), key=f"ev_ing_{ev.get('id', '')}"):
+                            st.session_state["pagina"] = "arqueo_caja"
+                            st.session_state["sidebar_state"] = "collapsed"
+                            st.session_state["sidebar_collapse_requested"] = True
+                            st.rerun()
+                    with col_r2:
+                        if tiene_permiso(usuario_actual, "ver_registrar_gasto") and st.button(t.get("eventos_btn_registrar_gasto", "Registrar gasto"), key=f"ev_gas_{ev.get('id', '')}"):
+                            st.session_state["pagina"] = "tesoreria"
+                            st.session_state["sidebar_state"] = "collapsed"
+                            st.session_state["sidebar_collapse_requested"] = True
+                            st.rerun()
         return
 
     # ---------- CONTABILIDAD (Bóveda Histórica) ----------
