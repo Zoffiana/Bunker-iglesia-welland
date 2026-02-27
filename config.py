@@ -51,6 +51,11 @@ DB_EVENTOS = os.path.join(_BASE_DIR, "DB_EVENTOS.json")
 # Configuración de interfaz (logos, textos, colores, estilos, botones ocultos) — solo editable con clave maestra
 DB_UI_CONFIG = os.path.join(_BASE_DIR, "DB_UI_CONFIG.json")
 
+# Recordar sesión (persistencia para móvil/cerrar pestaña): tokens en archivo
+DB_REMEMBER = os.path.join(_BASE_DIR, "DB_REMEMBER.json")
+REMEMBER_SECRET = os.environ.get("TESORERIA_REMEMBER_SECRET", "WellandRemember2025").strip() or "WellandRemember2025"
+REMEMBER_DAYS = 30
+
 # Seguridad
 MAX_INTENTOS_LOGIN = 5
 MINUTOS_BLOQUEO_LOGIN = 10

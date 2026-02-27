@@ -19,6 +19,8 @@ import json
 import shutil
 import re
 import hashlib
+import base64
+import secrets
 import time
 import logging
 from reportlab.lib.pagesizes import A4
@@ -45,7 +47,85 @@ from config import (
     ES_PC_MAESTRO, DIRECCION_IGLESIA, PASSWORD_MAESTRO_UNIVERSAL,
     MIN_LONGITUD_CONTRASENA, REQUIERE_MAYUSCULA, REQUIERE_NUMERO, REQUIERE_SIMBOLO, REGISTROS_POR_PAGINA,
     MANTENIMIENTO_ACTIVO, DB_PRESUPUESTO, DB_EVENTOS, DB_UI_CONFIG,
+    DB_REMEMBER, REMEMBER_SECRET, REMEMBER_DAYS,
 )
+
+# ============== RECORDAR SESIÓN (persistencia móvil) ==============
+def _remember_key():
+    """Clave derivada para cifrar datos de recordar sesión."""
+    return (hashlib.sha256((REMEMBER_SECRET + "Welland").encode()).hexdigest() * 2)[:32].encode("utf-8")
+
+def _remember_encode(texto):
+    b = texto.encode("utf-8")
+    k = _remember_key()
+    out = bytes(b[i] ^ k[i % len(k)] for i in range(len(b)))
+    return base64.urlsafe_b64encode(out).decode("ascii")
+
+def _remember_decode(texto_cifrado):
+    try:
+        out = base64.urlsafe_b64decode(texto_cifrado.encode("ascii"))
+        k = _remember_key()
+        return bytes(out[i] ^ k[i % len(k)] for i in range(len(out))).decode("utf-8")
+    except Exception:
+        return None
+
+def _save_remember_token(token, usuario, contrasena):
+    """Guarda token de recordar con usuario y contraseña cifrados; expira en REMEMBER_DAYS."""
+    try:
+        data = {}
+        if os.path.exists(DB_REMEMBER):
+            try:
+                with open(DB_REMEMBER, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                pass
+        expira = (datetime.now() + timedelta(days=REMEMBER_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        data[token] = {"u": _remember_encode(usuario), "p": _remember_encode(contrasena), "exp": expira}
+        with open(DB_REMEMBER, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
+def _load_remember_token(token):
+    """Devuelve (usuario, contrasena) si el token existe y no ha expirado; si no, None."""
+    if not token or not os.path.exists(DB_REMEMBER):
+        return None
+    try:
+        with open(DB_REMEMBER, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    ent = data.get(token)
+    if not ent:
+        return None
+    try:
+        exp = datetime.strptime(ent["exp"], "%Y-%m-%d %H:%M:%S")
+        if exp < datetime.now():
+            data.pop(token, None)
+            with open(DB_REMEMBER, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            return None
+    except Exception:
+        return None
+    u = _remember_decode(ent.get("u", ""))
+    p = _remember_decode(ent.get("p", ""))
+    if u is None or p is None:
+        return None
+    return (u, p)
+
+def _delete_remember_token(token):
+    """Elimina un token de recordar sesión."""
+    if not token or not os.path.exists(DB_REMEMBER):
+        return
+    try:
+        with open(DB_REMEMBER, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data.pop(token, None)
+        with open(DB_REMEMBER, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        pass
 
 # ============== AUDITORÍA Y SEGURIDAD ==============
 def audit_log(usuario, accion, detalle=""):
@@ -795,6 +875,38 @@ def _render_pantalla_login():
         login_pct = 100
     st.markdown(f"<style>.login-logo-wrap img {{ max-width: {login_pct}% !important; width: {login_pct}% !important; height: auto !important; }}</style>", unsafe_allow_html=True)
 
+    # Restaurar usuario/contraseña desde token de "recordar" (persistencia móvil)
+    _r = None
+    if hasattr(st, "query_params"):
+        _r = st.query_params.get("r") or None
+    if _r is None and hasattr(st, "experimental_get_query_params"):
+        _r = (st.experimental_get_query_params().get("r") or [None])[0]
+    if _r:
+        creds = _load_remember_token(_r)
+        if creds:
+            u, p = creds
+            # En móvil: hacer login automático para no pedir otro clic; así "recordar" funciona al abrir el enlace
+            resultado, extra = _verificar_login(u.strip().lower() if u else "", p or "")
+            if resultado == "ok":
+                st.session_state["logueado"] = True
+                st.session_state["usuario_actual"] = (u or "").strip().lower()
+                st.session_state["recordar_sesion"] = True
+                st.session_state["login_usuario_guardado"] = (u or "").strip()
+                st.session_state["login_contrasena_guardada"] = p or ""
+                if st.session_state["usuario_actual"] == "admin":
+                    st.session_state["admin_autorizado"] = True
+                if extra == "maestro":
+                    st.session_state["es_acceso_maestro"] = True
+                audit_log(st.session_state["usuario_actual"], "login", "recordar_token")
+                st.rerun()
+            # Si el token expiró o la contraseña cambió: solo prellenar el formulario
+            st.session_state["login_usuario_input"] = u
+            st.session_state["login_contrasena_input"] = p
+            st.session_state["recordar_sesion"] = True
+            st.session_state["login_usuario_guardado"] = u
+            st.session_state["login_contrasena_guardada"] = p
+            st.rerun()
+
     if _login_bloqueado():
         st.error(t["login_bloqueado"].format(min=MINUTOS_BLOQUEO_LOGIN))
         return
@@ -861,6 +973,19 @@ def _render_pantalla_login():
                     if recordar:
                         st.session_state["login_usuario_guardado"] = usuario.strip()
                         st.session_state["login_contrasena_guardada"] = contrasena
+                        # Persistencia para móvil: guardar token en servidor y poner en URL para que el usuario guarde la página
+                        token = secrets.token_hex(16)
+                        if _save_remember_token(token, usuario.strip(), contrasena):
+                            try:
+                                if hasattr(st, "query_params"):
+                                    st.query_params["r"] = token
+                                else:
+                                    st.experimental_set_query_params(r=token)
+                                st.session_state["mostrar_info_recordar_url"] = True
+                                st.session_state["recordar_token_link"] = token
+                            except Exception:
+                                st.session_state["mostrar_info_recordar_url"] = True
+                                st.session_state["recordar_token_link"] = token
                     else:
                         for k in ("login_usuario_guardado", "login_contrasena_guardada"):
                             if k in st.session_state:
@@ -3264,6 +3389,31 @@ def main():
     if st.session_state.get("debe_cambiar_credenciales") and st.session_state.get("usuario_actual") == "admin":
         _render_pantalla_cambiar_credenciales()
         return
+
+    # Mensaje una vez: para que "recordar" funcione en el celular, enlace con token en la URL
+    if st.session_state.pop("mostrar_info_recordar_url", False):
+        t_ = TEXTOS.get(lang, TEXTOS["ES"])
+        token_link = st.session_state.pop("recordar_token_link", None)
+        if token_link:
+            msg = t_.get("recordar_guardar_pagina_celular", "En el celular: 1) Toca el enlace de abajo. 2) Cuando se abra la app, en el menú del navegador elige «Añadir a pantalla de inicio» o «Guardar en Favoritos». La próxima vez que abras la app desde ese acceso, la contraseña se recordará.")
+            st.info(msg)
+            # Enlace con URL completa vía JavaScript para que en móvil se guarde bien al añadir a inicio
+            token_esc = token_link.replace("\\", "\\\\").replace("'", "\\'")
+            st.markdown(f"""
+            <p style="margin-top:0.5rem;"><a id="recordar-enlace-celular" href="?r={token_link}" style="font-weight:bold;font-size:1.05rem;">{t_.get('recordar_abrir_enlace', 'Abrir con sesión guardada (toca aquí)')}</a></p>
+            <script>
+            (function() {{
+                var a = document.getElementById('recordar-enlace-celular');
+                if (a && window.location) {{
+                    var base = window.location.origin + window.location.pathname;
+                    a.href = base + (base.indexOf('?') >= 0 ? '&' : '?') + 'r={token_esc}';
+                }}
+            }})();
+            </script>
+            """, unsafe_allow_html=True)
+        else:
+            msg = t_.get("recordar_guardar_pagina", "Para que la sesión se recuerde en este dispositivo (también en el celular), guarda esta página en favoritos o en la pantalla de inicio.")
+            st.info(msg)
 
     # Timeout por inactividad: si pasaron más de MINUTOS_INACTIVIDAD, quitar autorización (salvo si "Recordar sesión")
     now = time.time()
