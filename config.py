@@ -56,10 +56,11 @@ DB_REMEMBER = os.path.join(_BASE_DIR, "DB_REMEMBER.json")
 REMEMBER_SECRET = os.environ.get("TESORERIA_REMEMBER_SECRET", "WellandRemember2025").strip() or "WellandRemember2025"
 REMEMBER_DAYS = 30
 
-# Seguridad
-MAX_INTENTOS_LOGIN = 5
-MINUTOS_BLOQUEO_LOGIN = 10
-MIN_LONGITUD_CONTRASENA = 8
+# Seguridad: intentos de login infinitos (sin bloqueo por intentos fallidos)
+MAX_INTENTOS_LOGIN = 0   # No usado: intentos infinitos
+MINUTOS_BLOQUEO_LOGIN = 0
+MIN_LONGITUD_CONTRASENA = 4
+MIN_PIN_LONGITUD = 4  # Mínimo 4 dígitos, sin máximo (personas mayores)
 REQUIERE_MAYUSCULA = True
 REQUIERE_NUMERO = True
 REQUIERE_SIMBOLO = False  # Opcional para no ser muy restrictivo

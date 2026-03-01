@@ -45,7 +45,7 @@ from config import (
     MINUTOS_BORRADO, MINUTOS_INACTIVIDAD, CARPETA_HISTORIAL, CARPETA_RESETS, MAX_RESPALDOS,
     CONFIRMACION_REINICIO, CONFIRMACION_LIMPIAR_TODO, UMBRAL_GASTO_APROBACION, PIN_ADMIN_ENV,
     ES_PC_MAESTRO, DIRECCION_IGLESIA, PASSWORD_MAESTRO_UNIVERSAL,
-    MIN_LONGITUD_CONTRASENA, REQUIERE_MAYUSCULA, REQUIERE_NUMERO, REQUIERE_SIMBOLO, REGISTROS_POR_PAGINA,
+    MIN_LONGITUD_CONTRASENA, MIN_PIN_LONGITUD, REQUIERE_MAYUSCULA, REQUIERE_NUMERO, REQUIERE_SIMBOLO, REGISTROS_POR_PAGINA,
     MANTENIMIENTO_ACTIVO, DB_PRESUPUESTO, DB_EVENTOS, DB_UI_CONFIG,
     DB_REMEMBER, REMEMBER_SECRET, REMEMBER_DAYS,
 )
@@ -249,21 +249,8 @@ def _verificar_contrasena_hash(contrasena_ingresada, hash_guardado):
     return False
 
 def _login_bloqueado():
-    """True si hay demasiados intentos fallidos recientes."""
-    if not os.path.exists(LOGIN_INTENTOS):
-        return False
-    try:
-        with open(LOGIN_INTENTOS, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return False
-    intentos = data.get("intentos", [])
-    ahora = time.time()
-    ventana = MINUTOS_BLOQUEO_LOGIN * 60
-    recientes = [ts for ts in intentos if ahora - ts < ventana]
-    if len(recientes) >= MAX_INTENTOS_LOGIN:
-        return True
-    return False
+    """True si hay demasiados intentos fallidos. Siempre False = intentos infinitos (nunca se bloquea)."""
+    return False  # Intentos infinitos: no se bloquea por intentos fallidos
 
 def _registrar_intento_fallido():
     """Registra un intento fallido de login."""
@@ -1605,6 +1592,9 @@ TEXTOS = {
         "pin_actual": "PIN actual",
         "pin_nuevo": "PIN nuevo",
         "pin_guardado": "PIN guardado.",
+        "pin_minimo_ayuda": "Mínimo 4 caracteres (para personas mayores).",
+        "pin_minimo_error": "El PIN debe tener al menos 4 dígitos.",
+        "pin_minimo_ayuda": "Mínimo 4 dígitos (personas mayores).",
         "exportar_contador": "EXPORTAR PARA CONTADOR (EXCEL/CSV)",
         "exportar_excel": "EXPORTAR EXCEL (.xlsx)",
         "integridad_ok": "Integridad del libro comprobada.",
@@ -1625,6 +1615,10 @@ TEXTOS = {
         "conciliar_ayuda": "Compare el total registrado con lo que contó en caja (opcional).",
         "conciliar_por_dia": "Conciliar por día",
         "fecha_conciliar": "Fecha a conciliar",
+        "fecha_ingreso": "Fecha de ingreso",
+        "fecha_ingreso_ayuda": "Para ofrendas o saldos anteriores use la fecha correspondiente.",
+        "detalle_adicional": "Detalle (opcional)",
+        "detalle_adicional_placeholder": "Ej. Saldo anterior, ofrenda atrasada...",
         "contado_por": "Contado por",
         "contado_por_ayuda": "Obligatorio. Seleccione o escriba. Se guarda en mayúsculas para futuros arqueos.",
         "verificado_por": "Verificado por",
@@ -2145,6 +2139,9 @@ TEXTOS = {
         "pin_actual": "Current PIN",
         "pin_nuevo": "New PIN",
         "pin_guardado": "PIN saved.",
+        "pin_minimo_ayuda": "Minimum 4 characters (for elderly users).",
+        "pin_minimo_error": "PIN must be at least 4 digits.",
+        "pin_minimo_ayuda": "Minimum 4 digits (elderly-friendly).",
         "exportar_contador": "EXPORT FOR ACCOUNTANT (EXCEL/CSV)",
         "exportar_excel": "EXPORT EXCEL (.xlsx)",
         "integridad_ok": "Ledger integrity verified.",
@@ -2165,6 +2162,10 @@ TEXTOS = {
         "conciliar_ayuda": "Compare registered total with what you counted in cash (optional).",
         "conciliar_por_dia": "Reconcile by day",
         "fecha_conciliar": "Date to reconcile",
+        "fecha_ingreso": "Entry date",
+        "fecha_ingreso_ayuda": "For backdated offerings or previous balances, use the corresponding date.",
+        "detalle_adicional": "Detail (optional)",
+        "detalle_adicional_placeholder": "E.g. Previous balance, late offering...",
         "contado_por": "Counted by",
         "contado_por_ayuda": "Required. Select or type. Saved in uppercase for future counts.",
         "verificado_por": "Verified by",
@@ -3600,6 +3601,15 @@ def main():
         [data-testid="column"] {{ padding-left: 0.15rem !important; padding-right: 0.15rem !important; }}
         .main h1, .main h2, .main h3 {{ margin-top: 0.2rem !important; margin-bottom: 0.25rem !important; }}
         .main .stMarkdown {{ margin-bottom: 0.2rem !important; }}
+        /* En celular: botones grandes al ingresar ingresos (Arqueo / Ingresar bendición) y en el contenido principal */
+        .main .stButton > button,
+        .main [data-testid="stExpander"] .stButton > button,
+        .main [data-testid="stExpander"] [data-testid="stVerticalBlock"] .stButton > button,
+        .main [data-testid="column"] [data-testid="stButton"] > button {{
+            min-height: 3.25rem !important;
+            padding: 1rem 1.25rem !important;
+            font-size: 1.35rem !important;
+        }}
     }}
     .stApp, [data-testid="stAppViewContainer"], .main .block-container {{
         background: {bg_main} !important;
@@ -4216,9 +4226,15 @@ def main():
         # Preferencias en fila compacta (idioma + tema)
         st.markdown("<p class='menu-seccion' style='text-align:center;'>Idioma · Tema</p>", unsafe_allow_html=True)
         col_idioma, col_tema = st.columns(2)
+        idioma_actual = st.session_state.get("idioma", "ES")
         with col_idioma:
-            lang = st.radio(t["idioma"], options=["ES", "EN"], format_func=lambda x: "ES" if x == "ES" else "EN",
-                           key="idioma", horizontal=True, label_visibility="collapsed")
+            lang_sel = st.radio(t["idioma"], options=["ES", "EN"], format_func=lambda x: "ES" if x == "ES" else "EN",
+                                key="sidebar_idioma", horizontal=True, label_visibility="collapsed",
+                                index=0 if idioma_actual == "ES" else 1)
+            if lang_sel != idioma_actual:
+                st.session_state["idioma"] = lang_sel
+                st.rerun()
+        lang = st.session_state.get("idioma", "ES")
         t = TEXTOS[lang]
         ministerios = MINISTERIOS if lang == "ES" else MINISTERIOS_EN
         with col_tema:
@@ -4606,10 +4622,12 @@ def main():
                             st.rerun()
         # PIN de administrador: establecer o cambiar
         with st.expander(t["cambiar_pin"] if _pin_admin_requerido() else t["establecer_pin"], expanded=False):
-            pin_actual = st.text_input(t["pin_actual"], type="password", key="admin_pin_actual")
-            pin_nuevo = st.text_input(t["pin_nuevo"], type="password", key="admin_pin_nuevo")
+            pin_actual = st.text_input(t["pin_actual"], type="password", key="admin_pin_actual", help=t.get("pin_minimo_ayuda", "Mínimo 4 caracteres (personas mayores)."))
+            pin_nuevo = st.text_input(t["pin_nuevo"], type="password", key="admin_pin_nuevo", help=t.get("pin_minimo_ayuda", "Mínimo 4 caracteres (personas mayores)."))
             if st.button("Guardar PIN", key="btn_guardar_pin") and pin_nuevo:
-                if _pin_admin_requerido() and not _verificar_pin_admin(pin_actual):
+                if len((pin_nuevo or "").strip()) < MIN_PIN_LONGITUD:
+                    st.error(t.get("pin_minimo_error", f"Mínimo {MIN_PIN_LONGITUD} caracteres."))
+                elif _pin_admin_requerido() and not _verificar_pin_admin(pin_actual):
                     st.error(t["pin_incorrecto"])
                 else:
                     try:
@@ -4969,6 +4987,8 @@ def main():
                 medio_pago_sel = st.selectbox(t["medio_pago"], medios_opciones, key="medio_pago_bendicion", disabled=not campos_habilitados)
                 es_efectivo = (medio_pago_sel == medio_efectivo)
                 es_cheques = (medio_pago_sel == medio_cheques_es or medio_pago_sel == medio_cheques_en)
+                fecha_ingreso_val = st.date_input(t["fecha_ingreso"], value=datetime.now().date(), key="fecha_ingreso_arqueo", disabled=not campos_habilitados, help=t.get("fecha_ingreso_ayuda", ""))
+                detalle_extra = (st.text_input(t["detalle_adicional"], key="detalle_extra_ingreso", max_chars=120, placeholder=t.get("detalle_adicional_placeholder", ""), disabled=not campos_habilitados) or "").strip()
 
                 if es_cheques:
                     cheques_cant = st.number_input(t["cheques_cantidad"], min_value=0, value=0, step=1, key="cheques_cant_arqueo", disabled=not campos_habilitados)
@@ -5025,6 +5045,7 @@ def main():
                     "min_bendicion", "fondo_caja_arqueo", "cheques_cant_arqueo", "cheques_tot_arqueo",
                     "b100", "b50", "b20", "b10", "b5", "m2", "m1", "m025", "m010", "m005",
                     "sobres_cant_arqueo", "sobres_tot_arqueo", "total_suelto_arqueo", "monto_ingreso_pos", "ref_pos",
+                    "fecha_ingreso_arqueo", "detalle_extra_ingreso",
                     "_last_total_arqueo", "limpiar_arqueo"
                 )
                 col_reg, col_sp, col_ref = st.columns([1, 2, 1])
@@ -5036,8 +5057,8 @@ def main():
                                 st.warning(t["arqueo_cero"])
                             else:
                                 rid = generar_id_arqueo()
-                                fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                detalle = f"Arqueo - Cheques ({cheques_cant} cheques)"
+                                fecha_ahora = (fecha_ingreso_val.strftime("%Y-%m-%d") if hasattr(fecha_ingreso_val, "strftime") else datetime.now().strftime("%Y-%m-%d")) + " " + datetime.now().strftime("%H:%M:%S")
+                                detalle = f"Arqueo - Cheques ({cheques_cant} cheques)" + (" — " + detalle_extra if detalle_extra else "")
                                 if lang == "ES":
                                     tipo_guardar_ing = tipo_ingreso_sel
                                 else:
@@ -5080,8 +5101,8 @@ def main():
                                 st.warning(t["arqueo_cero"])
                             else:
                                 rid = generar_id_arqueo()
-                                fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                detalle = f"Arqueo - {ministerio}"
+                                fecha_ahora = (fecha_ingreso_val.strftime("%Y-%m-%d") if hasattr(fecha_ingreso_val, "strftime") else datetime.now().strftime("%Y-%m-%d")) + " " + datetime.now().strftime("%H:%M:%S")
+                                detalle = f"Arqueo - {ministerio}" + (" — " + detalle_extra if detalle_extra else "")
                                 if lang == "ES":
                                     tipo_guardar_ing = tipo_ingreso_sel
                                 else:
@@ -5129,7 +5150,7 @@ def main():
                                 st.warning(t["arqueo_cero"])
                             else:
                                 rid = generar_id_arqueo()
-                                fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                fecha_ahora = (fecha_ingreso_val.strftime("%Y-%m-%d") if hasattr(fecha_ingreso_val, "strftime") else datetime.now().strftime("%Y-%m-%d")) + " " + datetime.now().strftime("%H:%M:%S")
                                 if lang == "ES":
                                     tipo_guardar_ing = tipo_ingreso_sel
                                 else:
@@ -5149,6 +5170,7 @@ def main():
                                     detalle = f"{tipo_guardar_ing} ({sufijo} ****{ref})"
                                 else:
                                     detalle = f"{tipo_guardar_ing} ({sufijo})"
+                                detalle = detalle + (" — " + detalle_extra if detalle_extra else "")
                                 nueva = pd.DataFrame([{
                                     "id_registro": rid,
                                     "fecha": fecha_ahora,
